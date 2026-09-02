@@ -94,8 +94,10 @@ export class CameraDirector {
       dist = clamp(6.1 + drop * 0.105, 6.1, 12.6);
       sideBias = lerp(0.90, 1.0, this.profile);
       outBias = lerp(0.30, 0.09, this.profile);
-      // Sit below the diver, biased toward the water, so you can see it coming.
-      camY = lerp(b.pos.y, waterY + 3.0, clamp01(0.28 + urgency * 0.20));
+      // Sit just above the diver and look down past them. Sitting BELOW and
+      // also aiming below double-counts the downward bias and pushes the diver
+      // straight off the top of the frame.
+      camY = b.pos.y + lerp(1.6, -0.4, urgency);
       camY = Math.max(camY, waterY + 2.2);
       // Once the dive is over, settle back and watch the splash rather than
       // chasing a body that is now sinking past the lens.
@@ -136,10 +138,20 @@ export class CameraDirector {
       _look.set(b.pos.x + fx * 2.0, b.pos.y - 0.5 - h * 0.095, b.pos.z + fz * 2.0);
     } else {
       const lead = clamp01(0.26 - urgency * 0.26);
+      const lx = lerp(b.pos.x, _p.x, lead);
+      const lz = lerp(b.pos.z, _p.z, lead);
+      // Aim so the diver lands at a chosen height on screen, computed from the
+      // actual distance and field of view rather than guessed as a world-space
+      // offset -- that way the framing holds at every altitude and every FOV.
+      // High in the dive they sit near the top with the drop below them; close
+      // to the water they come back toward the middle for the read.
+      const flat = Math.hypot(this.pos.x - b.pos.x, this.pos.z - b.pos.z);
+      const wantUp = lerp(0.42, 0.16, urgency);
+      const drop = flat * Math.tan((wantUp * this.fov * Math.PI) / 360);
       const ty = game.phase === 'result'
         ? lerp(b.pos.y, waterY + 0.4, clamp01(game.sinceResult * 1.6))
-        : lerp(b.pos.y, _p.y, lead) + 0.2;
-      _look.set(lerp(b.pos.x, _p.x, lead), ty, lerp(b.pos.z, _p.z, lead));
+        : b.pos.y - drop;
+      _look.set(lx, ty, lz);
     }
     this.target.x = damp(this.target.x, _look.x, posRate * 1.5, dt);
     this.target.y = damp(this.target.y, _look.y, posRate * 1.5, dt);
