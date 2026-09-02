@@ -78,6 +78,47 @@ function sdShape(s: Shape, px: number, py: number, pz: number): number {
   }
 }
 
+// --- Cheap 3D value noise. Called a lot (once per SDF sample, and the SDF is
+// sampled seven times per collision probe), so it is written for speed: an
+// integer hash, no gradients, no lookup tables.
+function vhash(i: number, j: number, k: number): number {
+  let n = (i * 374761393 + j * 668265263 + k * 1274126177) | 0;
+  n = (n ^ (n >>> 13)) * 1274126177 | 0;
+  return ((n ^ (n >>> 16)) >>> 0) / 4294967296;
+}
+function vnoise(x: number, y: number, z: number): number {
+  const ix = Math.floor(x), iy = Math.floor(y), iz = Math.floor(z);
+  let fx = x - ix, fy = y - iy, fz = z - iz;
+  fx = fx * fx * (3 - 2 * fx); fy = fy * fy * (3 - 2 * fy); fz = fz * fz * (3 - 2 * fz);
+  const c000 = vhash(ix, iy, iz), c100 = vhash(ix + 1, iy, iz);
+  const c010 = vhash(ix, iy + 1, iz), c110 = vhash(ix + 1, iy + 1, iz);
+  const c001 = vhash(ix, iy, iz + 1), c101 = vhash(ix + 1, iy, iz + 1);
+  const c011 = vhash(ix, iy + 1, iz + 1), c111 = vhash(ix + 1, iy + 1, iz + 1);
+  const x00 = c000 + (c100 - c000) * fx, x10 = c010 + (c110 - c010) * fx;
+  const x01 = c001 + (c101 - c001) * fx, x11 = c011 + (c111 - c011) * fx;
+  const y0 = x00 + (x10 - x00) * fy, y1 = x01 + (x11 - x01) * fy;
+  return y0 + (y1 - y0) * fz;
+}
+
+/**
+ * Surface detail folded into the distance field itself rather than added as a
+ * displacement at mesh time. That costs a little performance on every collision
+ * probe, and buys the thing that matters: the ledge you can see is the ledge you
+ * land on, right down to the bumps.
+ *
+ * Three layers, chosen to look like bedded limestone: broad erosion, horizontal
+ * bedding planes that undulate, and a medium fracture roughness.
+ */
+function detail(x: number, y: number, z: number): number {
+  const warp = vnoise(x * 0.031, y * 0.019, z * 0.031) - 0.5;
+  const bedding = Math.abs(Math.sin(y * 0.46 + warp * 5.6)); // 0 at a plane, 1 mid-bed
+  const broad = vnoise(x * 0.058, y * 0.041, z * 0.058) - 0.5;
+  const mediumA = vnoise(x * 0.165, y * 0.135, z * 0.165) - 0.5;
+  const mediumB = vnoise(x * 0.42, y * 0.36, z * 0.42) - 0.5;
+  // Positive = pushed outward. Bedding planes cut IN, so ledges form on top.
+  return broad * 1.65 + mediumA * 0.62 + mediumB * 0.26 - (1 - bedding) * 0.30;
+}
+
 /** Polynomial smooth min -- gives rock the fused, weathered look of real stone. */
 function smin(a: number, b: number, k: number): number {
   if (k <= 1e-4) return Math.min(a, b);
@@ -142,6 +183,8 @@ export class SdfField {
       else d = smin(d, v, s.k);
     }
     if (cut > -1e3) d = smax(d, cut, 1.2);
+    // Only worth evaluating the detail near the surface, where it can matter.
+    if (d < 6 && d > -6) d = (d - detail(px, py, pz)) * 0.72;
     return d;
   }
 

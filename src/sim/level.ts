@@ -61,44 +61,66 @@ export class Level implements CollisionWorld {
   private buildRock() {
     const R = this.rock;
 
-    // --- Main headland: a stack of broad, slightly rotated slabs. Rotating each
-    // one a little and letting the smooth-union fuse them is what stops the
-    // cliff reading as "a pile of boxes" up close.
-    const slabs: [number, number, number, number, number, number, number][] = [
-      // x,    y,    z,   hx,  hy,  hz,  yaw
-      [-30, 4, 0, 17, 10, 30, 0.05],
-      [-28, 16, -4, 15, 9, 26, -0.10],
-      [-30, 27, 2, 14, 8, 22, 0.14],
-      [-33, 36, -2, 12, 7, 17, -0.06],
-      [-37, 44, 3, 10, 6, 13, 0.09],
-    ];
-    for (const [x, y, z, hx, hy, hz, yaw] of slabs) R.add(box(x, y, z, hx, hy, hz, 1.4, yaw, 3.2));
-
-    // Buttresses that make the seaward face steep and undercut, so an eastward
-    // jump from any ledge is always clean.
+    // --- Main headland. One tall leaning mass rather than a stack of slabs,
+    // then vertical buttress ribs down the seaward face. Those ribs are what
+    // makes real limestone sea cliffs read as tall: the eye follows the flutes.
     R.add(
-      box(-16.5, 12, 8, 5.5, 13, 9, 1.6, 0.22, 3.0),
-      box(-15.0, 6, -10, 6.0, 8, 10, 1.5, -0.18, 3.0),
-      box(-17.5, 22, -3, 4.5, 11, 7, 1.4, 0.10, 2.8),
-      sphere(-13.5, 3.0, 2, 5.2, 3.4),
-      sphere(-14.5, 9.5, -16, 5.6, 3.2),
-      sphere(-12.0, 2.0, 16, 4.6, 3.0),
+      box(-31, 12, -2, 18, 26, 30, 2.2, 0.07, 2.4),
+      box(-34, 33, -4, 15, 12, 24, 2.0, -0.12, 2.6),
+      box(-39, 43, 1, 12, 8, 17, 1.8, 0.10, 2.6),
+      box(-26, 4, 18, 12, 12, 12, 1.8, 0.30, 2.6),
+      box(-25, 3, -26, 13, 11, 12, 1.8, -0.24, 2.6),
+    );
+
+    // Buttress ribs on the face, at varied heights so the skyline is not level.
+    const ribs: [number, number, number, number, number][] = [
+      // xTop, zTop, topY, baseX, radius
+      [-13.6, 12.0, 20.0, -17.5, 3.2],
+      [-12.2, 4.5, 27.5, -16.5, 3.6],
+      [-13.0, -3.0, 33.0, -17.0, 3.3],
+      [-14.4, -11.0, 24.0, -18.0, 3.5],
+      [-13.2, -19.0, 17.0, -17.0, 3.0],
+      [-15.5, 20.0, 14.0, -19.0, 2.8],
+    ];
+    for (const [xt, zt, topY, xb, r] of ribs) {
+      R.add(capsule(xb, -10, zt, xt, topY, zt, r, 2.0));
+    }
+
+    // Overhangs and a couple of caves cut into the face.
+    R.add(
+      box(-15.5, 30.5, -3.0, 4.0, 2.6, 6.0, 1.0, 0.16, 2.0),
+      box(-16.0, 19.0, 11.0, 3.4, 2.2, 5.0, 1.0, -0.14, 2.0),
+    );
+    R.add(
+      carve(capsule(-11.5, 2.0, -8.0, -16.5, 3.4, -8.4, 2.9, 1.6)),
+      carve(sphere(-13.0, 6.5, 15.5, 3.2, 1.6)),
+      carve(sphere(-15.5, 26.0, 5.0, 2.8, 1.4)),
+    );
+
+    // Talus: boulders piled where the face has collapsed into the sea.
+    R.add(
+      sphere(-11.5, 1.0, 2.0, 3.6, 2.0),
+      sphere(-9.8, -0.6, -14.5, 3.2, 1.8),
+      sphere(-12.5, 0.4, 22.0, 3.4, 1.9),
+      sphere(-10.2, 2.6, -21.0, 2.7, 1.6),
     );
 
     // Ledges. Each one is a shelf pushed out of the face; the visual mesh and
     // the surface you stand on are the same surface.
     R.add(
-      box(-7.9, 5.4, 6.0, 3.7, 1.5, 3.0, 0.5, 0.16, 1.6),   // The Shelf
-      box(-9.6, 12.1, -6.0, 3.4, 1.5, 2.6, 0.5, -0.12, 1.6), // Gull Ledge
+      box(-7.9, 5.4, 6.0, 3.7, 1.5, 3.0, 0.5, 0.16, 1.4),   // The Shelf
+      box(-9.6, 12.1, -6.0, 3.4, 1.5, 2.6, 0.5, -0.12, 1.4), // Gull Ledge
     );
 
     // --- Sea stack: "The Mast". Tall, tapering, standing alone in deep water.
     R.add(
-      capsule(9.4, -10, -19.4, 11.2, 21, -18.6, 4.7, 3.0),
-      capsule(11.2, 19, -18.6, 11.0, 32.4, -18.3, 2.9, 2.4),
-      sphere(11.0, 33.2, -18.3, 2.6, 1.8),
-      sphere(12.6, 1.0, -21.8, 3.9, 3.0),
-      sphere(7.6, 0.4, -15.6, 3.4, 2.8),
+      capsule(9.4, -10, -19.4, 11.2, 21, -18.6, 4.7, 2.2),
+      capsule(11.2, 19, -18.6, 11.0, 32.4, -18.3, 2.9, 1.8),
+      sphere(11.0, 33.2, -18.3, 2.6, 1.4),
+      capsule(13.6, -6, -21.0, 12.8, 13, -20.6, 2.6, 1.8),
+      capsule(7.4, -6, -16.4, 8.2, 9, -16.8, 2.3, 1.8),
+      sphere(12.6, 1.0, -21.8, 3.9, 2.2),
+      sphere(7.6, 0.4, -15.6, 3.4, 2.0),
     );
 
     // --- Natural arch spanning the inlet, with the opening carved out.
@@ -124,9 +146,12 @@ export class Level implements CollisionWorld {
 
     // --- Far headland closing the bay to the north, for composition and depth.
     R.add(
-      box(-14, 6, -52, 22, 12, 14, 2.0, 0.10, 4.0),
-      box(6, 3, -58, 16, 8, 10, 2.0, -0.12, 4.0),
-      sphere(16, 1.0, -46, 6.0, 3.0),
+      box(-30, 5, -86, 30, 13, 16, 3.0, 0.06, 3.0),
+      box(4, 3, -96, 26, 9, 13, 3.0, -0.10, 3.0),
+      sphere(24, 1.0, -80, 7.5, 3.0),
+      sphere(-6, 4.0, -78, 8.0, 3.0),
+      box(58, 2, 46, 22, 7, 15, 3.0, 0.22, 3.0),
+      sphere(40, 1.0, 40, 8.0, 3.0),
     );
   }
 
@@ -150,9 +175,9 @@ export class Level implements CollisionWorld {
 
   private buildSpots() {
     this.spots = [
-      { id: 'shelf', name: 'The Shelf', pos: new V3(-4.9, 6.90, 6.0), yaw: 0.10, height: 6.9, blurb: 'Low and forgiving. Learn the timing here.' },
-      { id: 'gull', name: 'Gull Ledge', pos: new V3(-6.9, 13.62, -6.0), yaw: -0.08, height: 13.6, blurb: 'Enough air for a double. Mind the face on the way out.' },
-      { id: 'arch', name: 'The Arch', pos: new V3(12.0, 24.50, 17.4), yaw: 0.04, height: 24.5, blurb: 'The far leg is right under you. Jump lazy and you find it.' },
+      { id: 'shelf', name: 'The Shelf', pos: new V3(-4.9, 6.58, 6.0), yaw: 0.10, height: 6.6, blurb: 'Low and forgiving. Learn the timing here.' },
+      { id: 'gull', name: 'Gull Ledge', pos: new V3(-6.9, 13.68, -6.0), yaw: -0.08, height: 13.6, blurb: 'Enough air for a double. Mind the face on the way out.' },
+      { id: 'arch', name: 'The Arch', pos: new V3(12.0, 24.32, 17.4), yaw: 0.04, height: 24.3, blurb: 'The far leg is right under you. Jump lazy and you find it.' },
       { id: 'plank', name: 'The Plank', pos: new V3(-3.2, 27.92, -0.4), yaw: 0.0, height: 27.9, blurb: 'Weathered timber, deep water, nothing in the way.' },
       { id: 'mast', name: 'The Mast', pos: new V3(18.4, 33.82, -18.3), yaw: -0.05, height: 33.8, blurb: 'Four seconds of falling. Do something with them.' },
     ];

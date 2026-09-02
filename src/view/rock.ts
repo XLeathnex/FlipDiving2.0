@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { buildRockMesh } from './surfacenets.ts';
+import { buildRockMesh, type RockMesh } from './surfacenets.ts';
 import type { Level } from '../sim/level.ts';
 
 /**
@@ -13,8 +13,11 @@ import type { Level } from '../sim/level.ts';
  *  - triplanar detail normals so it still holds up when the camera is close.
  */
 export function buildRock(level: Level, cell = 0.5): { mesh: THREE.Mesh; tris: number } {
-  const m = buildRockMesh(level.rock, cell);
+  return rockFromMesh(level, buildRockMesh(level.rock, cell));
+}
 
+/** Meshing happens in a worker; this turns the raw arrays into a lit surface. */
+export function rockFromMesh(level: Level, m: Pick<RockMesh, 'positions' | 'normals' | 'ao' | 'indices' | 'triangles'>): { mesh: THREE.Mesh; tris: number } {
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(m.positions, 3));
   geo.setAttribute('normal', new THREE.BufferAttribute(m.normals, 3));
@@ -27,6 +30,7 @@ export function buildRock(level: Level, cell = 0.5): { mesh: THREE.Mesh; tris: n
     roughness: 0.92,
     metalness: 0.0,
     dithering: true,
+    envMapIntensity: 0.38,
   });
 
   mat.onBeforeCompile = (shader) => {
@@ -76,19 +80,22 @@ export function buildRock(level: Level, cell = 0.5): { mesh: THREE.Mesh; tris: n
           float grain  = fbm3(vWPos * 0.85);
           float coarse = fbm3(vWPos * 0.20);
 
-          vec3 pale  = vec3(0.760, 0.712, 0.618);
-          vec3 warm  = vec3(0.640, 0.545, 0.432);
-          vec3 shade = vec3(0.352, 0.318, 0.286);
+          vec3 pale  = vec3(0.520, 0.478, 0.402);
+          vec3 warm  = vec3(0.372, 0.306, 0.232);
+          vec3 shade = vec3(0.168, 0.150, 0.132);
           vec3 base = mix(warm, pale, smoothstep(0.35, 0.72, strata * 0.55 + coarse * 0.45));
           base = mix(base, shade, smoothstep(0.62, 0.95, grain) * 0.45);
 
           // Sun-bleached on top faces, dirtier on the undersides.
-          base = mix(base * 0.74, base * 1.10, pow(up, 0.7));
+          base = mix(base * 0.58, base * 1.12, pow(up, 0.7));
+          // Bedding planes read as darker recessed lines across the face.
+          float bed = abs(sin(vWPos.y * 0.46 + (fbm3(vWPos * 0.031) - 0.5) * 5.6));
+          base *= mix(0.62, 1.06, smoothstep(0.03, 0.42, bed));
 
           // Splash zone: dark, wet, then a band of algae right at the water.
           float wet   = 1.0 - smoothstep(0.4, 4.6, hgt);
           float algae = smoothstep(-0.4, 0.7, hgt) * (1.0 - smoothstep(0.9, 2.9, hgt));
-          base = mix(base, base * vec3(0.34, 0.33, 0.32), wet * 0.85);
+          base = mix(base, base * vec3(0.26, 0.27, 0.28), wet * 0.90);
           base = mix(base, vec3(0.150, 0.205, 0.140), algae * 0.55 * (0.5 + 0.5 * grain));
 
           // Sparse dry scrub clinging to the flat tops, well above the spray.
@@ -96,7 +103,7 @@ export function buildRock(level: Level, cell = 0.5): { mesh: THREE.Mesh; tris: n
           base = mix(base, vec3(0.255, 0.268, 0.155), veg * 0.62);
 
           diffuseColor.rgb *= base;
-          diffuseColor.rgb *= mix(0.30, 1.0, vAo);
+          diffuseColor.rgb *= mix(0.09, 1.0, vAo);
         }`)
       .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
         {
@@ -113,7 +120,12 @@ export function buildRock(level: Level, cell = 0.5): { mesh: THREE.Mesh; tris: n
           vec3 p = vWPos * 1.6;
           float c = fbm3(p);
           vec3 grad = vec3(fbm3(p + vec3(e,0,0)) - c, fbm3(p + vec3(0,e,0)) - c, fbm3(p + vec3(0,0,e)) - c) / e;
-          normal = normalize(normal - (grad - dot(grad, normal) * normal) * 0.22);
+          // Second, finer octave keeps the surface alive right up against the lens.
+          vec3 p2 = vWPos * 7.4;
+          float e2 = 0.05, c2 = fbm3(p2);
+          vec3 g2 = vec3(fbm3(p2 + vec3(e2,0,0)) - c2, fbm3(p2 + vec3(0,e2,0)) - c2, fbm3(p2 + vec3(0,0,e2)) - c2) / e2;
+          vec3 bump = grad * 0.75 + g2 * 0.11;
+          normal = normalize(normal - (bump - dot(bump, normal) * normal) * 0.30);
         }`);
   };
 

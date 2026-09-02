@@ -5,7 +5,7 @@ import * as THREE from 'three';
  * more "correct" but harder to art-direct; this is cheaper and lets me put the
  * warmth exactly where the composition wants it.
  */
-export const SUN_DIR = new THREE.Vector3(-0.36, 0.42, -0.83).normalize();
+export const SUN_DIR = new THREE.Vector3(0.60, 0.50, -0.62).normalize();
 
 const skyVert = /* glsl */`
 varying vec3 vDir;

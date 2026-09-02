@@ -104,6 +104,9 @@ export function buildRockMesh(field: SdfField, cell: number, pad = 1.5): RockMes
 
   // --- Pass 2: quads across every sign-changing grid edge.
   const idx: number[] = [];
+  // Winding matters: get it backwards and every surface you can see is really
+  // the inside of the far side of the rock, which looks almost right in
+  // silhouette and is completely wrong under a light.
   const quad = (a: number, b: number, c: number, d: number, flip: boolean) => {
     if (a < 0 || b < 0 || c < 0 || d < 0) return;
     if (flip) { idx.push(a, c, b, a, d, c); } else { idx.push(a, b, c, a, c, d); }
@@ -115,21 +118,21 @@ export function buildRockMesh(field: SdfField, cell: number, pad = 1.5): RockMes
     if (i + 1 < nx) {
       const v1 = at(i + 1, j, k);
       if (v1 < 1e2 && (v0 < 0) !== (v1 < 0)) {
-        quad(cellVert[ci3(i, j - 1, k - 1)], cellVert[ci3(i, j, k - 1)], cellVert[ci3(i, j, k)], cellVert[ci3(i, j - 1, k)], v0 < 0);
+        quad(cellVert[ci3(i, j - 1, k - 1)], cellVert[ci3(i, j, k - 1)], cellVert[ci3(i, j, k)], cellVert[ci3(i, j - 1, k)], v0 >= 0);
       }
     }
     // +Y edge
     if (j + 1 < ny) {
       const v1 = at(i, j + 1, k);
       if (v1 < 1e2 && (v0 < 0) !== (v1 < 0)) {
-        quad(cellVert[ci3(i - 1, j, k - 1)], cellVert[ci3(i, j, k - 1)], cellVert[ci3(i, j, k)], cellVert[ci3(i - 1, j, k)], v0 >= 0);
+        quad(cellVert[ci3(i - 1, j, k - 1)], cellVert[ci3(i, j, k - 1)], cellVert[ci3(i, j, k)], cellVert[ci3(i - 1, j, k)], v0 < 0);
       }
     }
     // +Z edge
     if (k + 1 < nz) {
       const v1 = at(i, j, k + 1);
       if (v1 < 1e2 && (v0 < 0) !== (v1 < 0)) {
-        quad(cellVert[ci3(i - 1, j - 1, k)], cellVert[ci3(i, j - 1, k)], cellVert[ci3(i, j, k)], cellVert[ci3(i - 1, j, k)], v0 < 0);
+        quad(cellVert[ci3(i - 1, j - 1, k)], cellVert[ci3(i, j - 1, k)], cellVert[ci3(i, j, k)], cellVert[ci3(i - 1, j, k)], v0 >= 0);
       }
     }
   }
