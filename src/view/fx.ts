@@ -172,6 +172,18 @@ export class Particles {
     }
   }
 
+  /** Grit and dust kicked off the platform at the moment of takeoff. */
+  takeoff(x: number, y: number, z: number, power: number) {
+    const n = Math.round(10 + power * 16);
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const sp = 0.6 + Math.random() * 2.2 * (0.4 + power);
+      this.spawn(x + (Math.random() - 0.5) * 0.5, y - 0.9, z + (Math.random() - 0.5) * 0.5,
+        Math.cos(a) * sp, 0.4 + Math.random() * 1.3, Math.sin(a) * sp,
+        0.55 + Math.random() * 0.6, 0.06 + Math.random() * 0.13, 2, 1.6);
+    }
+  }
+
   /** Spray torn off a fast-moving body -- only shows up when you are really moving. */
   speedSpray(x: number, y: number, z: number, speed: number, dt: number) {
     if (speed < 19) return;

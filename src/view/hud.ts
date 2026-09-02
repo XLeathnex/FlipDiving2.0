@@ -39,8 +39,8 @@ const CSS = `
 #ladder .sea { position: absolute; left: 6px; right: 6px; bottom: 0; height: 2px; background: var(--ink); opacity: .8; }
 #ladder .mark { position: absolute; left: 8px; width: 16px; height: 1px; background: rgba(255,255,255,.30); }
 #ladder .diver { position: absolute; left: 8px; width: 16px; height: 2px; background: var(--warm); box-shadow: 0 0 12px var(--warm); border-radius: 2px; }
-#ladder .alt { position: absolute; left: 34px; font-size: 12px; font-variant-numeric: tabular-nums; transform: translateY(-50%); white-space: nowrap; }
-#ladder .ttw { position: absolute; left: 34px; bottom: -20px; font-size: 11px; letter-spacing: .1em; color: var(--dim); font-variant-numeric: tabular-nums; }
+#ladder .alt { position: absolute; left: 34px; font-size: 12.5px; font-weight: 600; font-variant-numeric: tabular-nums; transform: translateY(-50%); white-space: nowrap; }
+#ladder .ttw { position: absolute; left: 34px; bottom: -20px; font-size: 11px; letter-spacing: .1em; color: var(--dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
 #ladder .sealbl { position: absolute; left: 34px; bottom: 4px; font-size: 9.5px; letter-spacing: .18em; text-transform: uppercase; color: rgba(242,245,248,.38); }
 
 /* Live rotation readout. */
@@ -80,12 +80,14 @@ const CSS = `
 #spots .s { font-size: 12.5px; padding: 3px 0; color: rgba(242,245,248,.42); font-variant-numeric: tabular-nums; }
 #spots .s.cur { color: var(--ink); font-weight: 600; }
 #spots .s .h { color: rgba(242,245,248,.35); margin-left: 8px; font-size: 11px; }
+#spots .s .pb { display: block; font-size: 10px; color: rgba(255,181,98,.72); letter-spacing: .04em; }
+#result .newbest { font-size: 11px; letter-spacing: .22em; text-transform: uppercase; color: var(--warm); margin-top: 10px; }
 
 /* Help. */
-#help { position: absolute; left: 50%; bottom: 26px; transform: translateX(-50%); display: flex; gap: 20px; font-size: 11.5px; color: var(--dim); transition: opacity .35s; }
+#help { position: absolute; left: 50%; bottom: 20px; transform: translateX(-50%); display: flex; gap: 20px; font-size: 11.5px; color: var(--dim); transition: opacity .35s; }
 #help b { color: var(--ink); font-weight: 600; }
-#hint { position: absolute; left: 50%; bottom: 8.5%; transform: translateX(-50%); font-size: 13px; color: rgba(242,245,248,.72); transition: opacity .3s; text-align: center; }
-#blurb { position: absolute; left: 22px; bottom: 26px; font-size: 12.5px; color: var(--dim); max-width: 290px; line-height: 1.45; transition: opacity .3s; }
+#hint { position: absolute; left: 50%; bottom: 66px; transform: translateX(-50%); font-size: 13px; color: rgba(242,245,248,.78); transition: opacity .3s; text-align: center; max-width: 62vw; }
+#blurb { font-size: 12.5px; color: var(--dim); max-width: 250px; line-height: 1.42; margin-top: 10px; transition: opacity .3s; }
 .hide { opacity: 0 !important; }
 
 #load { position: fixed; inset: 0; z-index: 40; background: #0b1420; display: flex; flex-direction: column;
@@ -121,6 +123,7 @@ export class Hud {
         <div class="lbl">Cala Nera</div>
         <div class="spot" id="spotName">The Plank</div>
         <div class="height" id="spotH">28 m</div>
+        <div id="blurb"></div>
       </div>
       <div class="corner tr">
         <div class="lbl">Score</div>
@@ -146,10 +149,10 @@ export class Hud {
         <div class="trick" id="trick"></div>
         <div class="pts" id="pts">0</div>
         <div class="chips" id="chips"></div>
+        <div class="newbest" id="newbest"></div>
         <div class="again">Space to go again</div>
       </div>
       <div id="spots"></div>
-      <div id="blurb"></div>
       <div id="hint"></div>
       <div id="help">
         <span><b>Hold Space</b> charge</span>
@@ -162,14 +165,17 @@ export class Hud {
     parent.appendChild(this.el);
     for (const id of ['spotName', 'spotH', 'score', 'best', 'ladder', 'dmark', 'altTxt', 'ttwTxt',
       'rot', 'rotN', 'rotD', 'takeoff', 'powFill', 'spinFill', 'spinLbl', 'result', 'grade', 'trick',
-      'pts', 'chips', 'spots', 'help', 'hint', 'blurb', 'm1', 'm2', 'm3']) {
+      'pts', 'chips', 'newbest', 'spots', 'help', 'hint', 'blurb', 'm1', 'm2', 'm3']) {
       this.q[id] = document.getElementById(id)!;
     }
   }
 
-  setSpots(names: { name: string; height: number }[], cur: number) {
-    this.q.spots.innerHTML = names.map((s, i) =>
-      `<div class="s ${i === cur ? 'cur' : ''}">${s.name}<span class="h">${s.height.toFixed(0)} m</span></div>`).join('');
+  setSpots(names: { id: string; name: string; height: number }[], cur: number, bests: Record<string, number> = {}) {
+    this.q.spots.innerHTML = names.map((s, i) => {
+      const b = bests[s.id];
+      return `<div class="s ${i === cur ? 'cur' : ''}">${s.name}<span class="h">${s.height.toFixed(0)} m</span>`
+        + (b ? `<span class="pb">${b.toLocaleString()}</span>` : '') + '</div>';
+    }).join('');
   }
 
   showSpots(on: boolean) { this.q.spots.classList.toggle('on', on); }
@@ -211,7 +217,7 @@ export class Hud {
     }
 
     // --- Rotation counter.
-    const showRot = h.phase === 'air' && h.halfRots > 0.14;
+    const showRot = h.phase === 'air' && h.halfRots > 0.14 && !h.crashed;
     this.q.rot.classList.toggle('on', showRot);
     if (showRot) {
       const half = h.halfRots;
@@ -219,6 +225,12 @@ export class Hud {
       const isHalf = half - full * 2 >= 1;
       this.q.rotN.textContent = full === 0 ? (isHalf ? '½' : '') : `${full}${isHalf ? '½' : ''}`;
       this.q.rotD.textContent = h.shape > 0.75 ? 'Tuck' : h.shape < 0.22 ? 'Layout' : 'Pike';
+    }
+    // Losing control is worth saying out loud, immediately.
+    if (h.crashed && h.phase === 'air') {
+      this.q.rot.classList.add('on');
+      this.q.rotN.textContent = '';
+      this.q.rotD.textContent = 'Out of control';
     }
 
     // --- Result card.
@@ -231,6 +243,7 @@ export class Hud {
       this.q.trick.textContent = result.trickName;
       this.q.pts.textContent = `+${result.score.toLocaleString()}`;
       this.q.chips.innerHTML = result.chips.map((c) => `<div class="chip">${c}</div>`).join('');
+      this.q.newbest.textContent = result.newBest ? 'Personal best' : '';
     }
 
     this.q.blurb.textContent = h.phase === 'ready' ? blurb : '';

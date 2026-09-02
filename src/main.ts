@@ -15,6 +15,24 @@ import { Audio } from './audio/audio.ts';
 
 const loader = showLoader();
 
+// Personal bests survive a reload. Storage can throw (private windows, blocked
+// site data), and a missing high score is never worth breaking the game over.
+const BEST_KEY = 'calanera.bests.v1';
+function loadBests() {
+  try {
+    const raw = localStorage.getItem(BEST_KEY);
+    if (!raw) return;
+    const obj = JSON.parse(raw);
+    if (obj && typeof obj === 'object') {
+      for (const [k, v] of Object.entries(obj)) if (typeof v === 'number') game.bestBySpot[k] = v;
+      game.best = Math.max(0, ...Object.values(game.bestBySpot));
+    }
+  } catch { /* no stored bests; carry on */ }
+}
+function saveBests() {
+  try { localStorage.setItem(BEST_KEY, JSON.stringify(game.bestBySpot)); } catch { /* ignore */ }
+}
+
 const canvas = document.createElement('canvas');
 document.body.appendChild(canvas);
 
@@ -100,7 +118,8 @@ mesher.onmessage = (e) => {
   console.log(`[cala nera] rock ${tris.toLocaleString()} tris in ${(performance.now() - t0).toFixed(0)}ms`);
 
   hud.mount(document.body);
-  hud.setSpots(game.level.spots, game.spotIndex);
+  loadBests();
+  hud.setSpots(game.level.spots, game.spotIndex, game.bestBySpot);
   input.attach(canvas);
   input.onFirstInput = () => { audio.start(); audio.resume(); };
   director.snap(game, innerWidth / innerHeight);
@@ -157,7 +176,7 @@ function frame() {
     jump: intent.jump, jumpEdge: intent.jumpEdge, stretch: intent.stretch, rot: intent.rot,
     restart: intent.restart, spotDelta: intent.spotDelta,
   });
-  if (intent.spotDelta) { hud.setSpots(game.level.spots, game.spotIndex); audio.ui(); }
+  if (intent.spotDelta) { hud.setSpots(game.level.spots, game.spotIndex, game.bestBySpot); audio.ui(); }
 
   const b = game.body;
   const lvl = game.level;
@@ -168,7 +187,7 @@ function frame() {
       case 'spawn':
         trail.reset(_hp.set(b.pos.x, b.pos.y, b.pos.z));
         particles.clear();
-        hud.setSpots(lvl.spots, game.spotIndex);
+        hud.setSpots(lvl.spots, game.spotIndex, game.bestBySpot);
         break;
       case 'charge':
         audio.charge();
@@ -176,6 +195,7 @@ function frame() {
       case 'launch':
         audio.jump(game.charge);
         director.punch();
+        particles.takeoff(b.pos.x, b.pos.y, b.pos.z, game.charge);
         hud.noteDive();
         break;
       case 'crash':
@@ -191,6 +211,7 @@ function frame() {
         }
         break;
       case 'entry': {
+        saveBests();
         const q = ev.q;
         particles.splash(ev.x, ev.y, ev.z, q, ev.speed, b.vel.x, b.vel.z);
         water.splash(ev.x, ev.z);
@@ -279,6 +300,9 @@ let debugView = false;
     debugCam.lookAt(tx, ty, tz);
     debugCam.updateProjectionMatrix();
   },
+  audioState: () => ({ started: !!audio.ctx, state: audio.ctx?.state ?? 'none', muted: audio.muted }),
+  /** Force the crash state, for inspecting the limp-body response. */
+  crash() { game.body.mode = 'crashed'; },
   hudOff() { document.getElementById('hud')!.style.display = 'none'; },
   hudOn() { document.getElementById('hud')!.style.display = ''; },
   set(opts: Record<string, number>) {

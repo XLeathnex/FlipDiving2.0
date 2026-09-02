@@ -55,6 +55,7 @@ let shotN = 0;
 for (const cmd of script) {
   try {
     if (cmd.set) await page.evaluate((o) => (window).__cala.set(o), cmd.set);
+    if (cmd.crash) await page.evaluate(() => (window).__cala.crash());
     if (cmd.hud !== undefined) await page.evaluate((v) => v ? (window).__cala.hudOn() : (window).__cala.hudOff(), cmd.hud);
     if (cmd.key) await page.keyboard.down(cmd.key);
     if (cmd.up) await page.keyboard.up(cmd.up);

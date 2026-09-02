@@ -32,6 +32,8 @@ export interface DiveResult {
   shapeName: string;
   chips: string[];
   trickName: string;
+  /** Set by the game layer when this beat the spot's personal best. */
+  newBest?: boolean;
 }
 
 /**

@@ -53,6 +53,7 @@ export interface HudState {
   shape: number;
   spotName: string;
   spotHeight: number;
+  crashed: boolean;
 }
 
 export class Game {
@@ -72,6 +73,8 @@ export class Game {
 
   best = 0;
   lastScore = 0;
+  /** Personal best per spot. A score to beat, not a progression system. */
+  bestBySpot: Record<string, number> = {};
 
   /** Events for the presentation layer to consume each frame. */
   events: ({ t: 'launch' } | { t: 'impact'; e: ImpactEvent } | { t: 'entry'; q: number; speed: number; x: number; y: number; z: number }
@@ -289,6 +292,11 @@ export class Game {
     this.result = scoreDive(stats, entry);
     this.lastScore = this.result.score;
     this.best = Math.max(this.best, this.result.score);
+    const id = this.spot.id;
+    if (this.result.score > (this.bestBySpot[id] ?? 0)) {
+      this.bestBySpot[id] = this.result.score;
+      this.result.newBest = true;
+    }
     this.phase = 'result';
     this.sinceResult = 0;
     this.events.push({ t: 'entry', q: entry.quality, speed, x: e.x, y: e.y, z: e.z });
@@ -315,6 +323,7 @@ export class Game {
       shape: b.shape,
       spotName: this.spot.name,
       spotHeight: this.spot.height,
+      crashed: b.mode === 'crashed',
     };
   }
 }
