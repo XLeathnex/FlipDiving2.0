@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { clamp01, lerp } from '../core/vec.ts';
+import { V3, clamp, clamp01, lerp } from '../core/vec.ts';
 import type { DiverBody } from '../sim/body.ts';
 
 /**
@@ -24,6 +24,7 @@ interface Joint {
 }
 
 const j = (): Joint => ({ a: 0, v: 0, target: 0 });
+const _axis = new V3();
 
 /** Joint set. Angles in radians; positive folds the body forwards. */
 interface PoseSet {
@@ -36,7 +37,12 @@ interface PoseSet {
 }
 
 const P = {
-  layout:  { hip: 0.00, knee: 0.02, ankle: -0.55, shoulder: 2.95, elbow: 0.04, armOut: 0.06, spine: -0.06, head: 0.10 },
+  // Two layouts, because both are correct and which one is correct depends on
+  // which end is going into the water first: arms overhead to make the hole for
+  // a head-first entry, arms locked at the sides for a feet-first one. Picking
+  // the right one automatically makes an entry look deliberate rather than lucky.
+  layout:  { hip: 0.00, knee: 0.02, ankle: -0.55, shoulder: 2.95, elbow: 0.04, armOut: 0.05, spine: -0.06, head: 0.10 },
+  layoutFeet: { hip: 0.00, knee: 0.02, ankle: -0.62, shoulder: 0.06, elbow: 0.06, armOut: 0.04, spine: -0.02, head: -0.05 },
   pike:    { hip: 1.85, knee: 0.06, ankle: -0.50, shoulder: 2.05, elbow: 0.12, armOut: 0.16, spine: 0.20, head: 0.35 },
   tuck:    { hip: 2.25, knee: 2.55, ankle: -0.30, shoulder: 1.10, elbow: 2.05, armOut: 0.22, spine: 0.34, head: 0.42 },
   stand:   { hip: 0.02, knee: 0.06, ankle: 0.00, shoulder: 0.10, elbow: 0.14, armOut: 0.13, spine: 0.00, head: 0.00 },
@@ -69,16 +75,6 @@ function capsule(len: number, r: number, mat: THREE.Material): THREE.Mesh {
   return m;
 }
 
-/** A limb segment hanging downward from its pivot, so rotation is intuitive. */
-function segment(parent: THREE.Object3D, len: number, r: number, mat: THREE.Material): THREE.Group {
-  const grp = new THREE.Group();
-  const c = capsule(len, r, mat);
-  c.position.y = -len / 2;
-  grp.add(c);
-  parent.add(grp);
-  return grp;
-}
-
 export class Character {
   root = new THREE.Group();
   private pelvis = new THREE.Group();
@@ -99,6 +95,7 @@ export class Character {
   private limp = 0;
   private asym = 0;
   private t = 0;
+  private leadSmooth = 1;
 
   constructor() {
     const skin = new THREE.MeshStandardMaterial({ color: SKIN, roughness: 0.58, metalness: 0.0 });
@@ -197,20 +194,32 @@ export class Character {
     return this.head.getWorldPosition(out);
   }
 
-  setPose(phase: 'ground' | 'charge' | 'air' | 'crashed', shape: number, charge: number) {
+  private _lay: PoseSet = { ...P.layout };
+
+  setPose(phase: 'ground' | 'charge' | 'air' | 'crashed', shape: number, charge: number, lead = 1) {
     if (phase === 'ground') { Object.assign(this.tgt, P.stand); return; }
     if (phase === 'charge') { blend(P.stand, P.crouch, clamp01(charge), this.tgt); return; }
     if (phase === 'crashed') { Object.assign(this.tgt, P.limp); return; }
     // In the air the pose tracks the physical shape scalar exactly, so what the
     // player sees is literally what the inertia tensor is doing.
     const s = clamp01(shape);
-    if (s < 0.5) blend(P.layout, P.pike, s * 2, this.tgt);
+    blend(P.layoutFeet, P.layout, clamp01(lead * 0.5 + 0.5), this._lay);
+    if (s < 0.5) blend(this._lay, P.pike, s * 2, this.tgt);
     else blend(P.pike, P.tuck, (s - 0.5) * 2, this.tgt);
   }
 
   update(dt: number, body: DiverBody, phase: 'ground' | 'charge' | 'air' | 'crashed') {
     this.t += dt;
-    this.setPose(phase, body.shape, 0);
+    // Which end is going in first, smoothed so the arms do not snap around when
+    // the body passes through horizontal.
+    const speed = body.vel.len();
+    let lead = 1;
+    if (speed > 3) {
+      body.bodyAxis(_axis);
+      lead = clamp((_axis.x * body.vel.x + _axis.y * body.vel.y + _axis.z * body.vel.z) / speed * 2.2, -1, 1);
+    }
+    this.leadSmooth += (lead - this.leadSmooth) * Math.min(1, dt * 3.2);
+    this.setPose(phase, body.shape, 0, this.leadSmooth);
 
     const wantLimp = phase === 'crashed' ? 1 : 0;
     this.limp += (wantLimp - this.limp) * Math.min(1, dt * (wantLimp ? 9 : 3));

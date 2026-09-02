@@ -1,4 +1,4 @@
-import { V3, clamp01, lerp, smoothstep } from '../core/vec.ts';
+import { clamp01, lerp, smoothstep } from '../core/vec.ts';
 
 export type Grade = 'Perfect' | 'Clean' | 'Good' | 'Rough' | 'Belly Flop' | 'Back Flop' | 'Crash';
 

@@ -47,7 +47,7 @@ void main() {
            : vKind < 2.5 ? vec3(0.72, 0.67, 0.58)
                          : vec3(0.82, 0.93, 0.96);
   float a = soft * vLife;
-  if (vKind > 0.5 && vKind < 1.5) a *= 0.26;
+  if (vKind > 0.5 && vKind < 1.5) a *= 0.19;
   if (vKind > 2.5) a *= 0.55;
   gl_FragColor = vec4(col, a);
 }`;
@@ -138,12 +138,13 @@ export class Particles {
         0.85 + Math.random() * 0.75, lerp(0.05, 0.16, Math.random()), Math.random() < 0.5 ? 1 : 0, 0.55,
       );
     }
-    // Low mist hanging over the impact.
-    for (let i = 0; i < 40; i++) {
+    // Low mist hanging over the impact. Kept sparse and small: this sits right
+    // where the grade is about to be read, and a wall of white helps nobody.
+    for (let i = 0; i < 24; i++) {
       const a = Math.random() * Math.PI * 2, r = Math.random() * spread * 0.7;
       this.spawn(x + Math.cos(a) * r, y + Math.random() * 0.8, z + Math.sin(a) * r,
         Math.cos(a) * 1.4, 0.7 + Math.random(), Math.sin(a) * 1.4,
-        1.2 + Math.random() * 1.4, 0.55 + Math.random() * 1.05, 1, 1.7);
+        1.0 + Math.random() * 1.1, 0.42 + Math.random() * 0.85, 1, 1.7);
     }
   }
 

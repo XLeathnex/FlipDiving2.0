@@ -1,5 +1,3 @@
-import { clamp } from './vec.ts';
-
 /**
  * Input is deliberately thin: it produces an intent struct, and nothing else in
  * the game knows what a key is. Adding touch or a gamepad later means writing

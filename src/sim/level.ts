@@ -1,5 +1,5 @@
-import { V3, clamp01, smoothstep } from '../core/vec.ts';
-import { SdfField, sphere, box, capsule, carve, type Shape } from './sdf.ts';
+import { V3 } from '../core/vec.ts';
+import { SdfField, sphere, box, capsule, carve } from './sdf.ts';
 import type { CollisionWorld, Contact } from './body.ts';
 
 /**

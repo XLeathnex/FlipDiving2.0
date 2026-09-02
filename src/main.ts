@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { Game } from './sim/game.ts';
 import { Input } from './core/input.ts';
-import { clamp01, lerp, smoothstep } from './core/vec.ts';
+import { clamp01, lerp } from './core/vec.ts';
 import { makeSky, bakeEnvironment, SUN_DIR } from './view/sky.ts';
 import { rockFromMesh } from './view/rock.ts';
 import { buildProps } from './view/props.ts';
@@ -106,7 +106,7 @@ let rockMat: THREE.MeshStandardMaterial | null = null;
 // --- Mesh the cove in a worker so the loading screen stays alive.
 const t0 = performance.now();
 const mesher = new Worker(new URL('./view/mesh.worker.ts', import.meta.url), { type: 'module' });
-mesher.postMessage({ cell: 0.5 });
+mesher.postMessage({ cell: 0.55 });
 mesher.onmessage = (e) => {
   const { mesh, tris } = rockFromMesh(game.level, e.data);
   rockMat = mesh.material as THREE.MeshStandardMaterial;

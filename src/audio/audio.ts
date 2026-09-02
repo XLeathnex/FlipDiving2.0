@@ -1,4 +1,4 @@
-import { clamp, clamp01, lerp } from '../core/vec.ts';
+import { clamp01, lerp } from '../core/vec.ts';
 
 /**
  * Everything is synthesised at runtime. No sample library means no licensing

@@ -1,4 +1,4 @@
-import { V3, Quat, clamp, clamp01, damp, lerp } from '../core/vec.ts';
+import { V3, Quat, clamp, clamp01, lerp } from '../core/vec.ts';
 import { poseAt, collisionSpheres, type PoseData } from './pose.ts';
 
 export const GRAVITY = 9.81;
@@ -70,7 +70,6 @@ export interface DiverControl {
 const _acc = new V3(), _torque = new V3(), _axis = new V3();
 const _t1 = new V3(), _t2 = new V3(), _t3 = new V3();
 const _c1 = new V3();
-const _q = new Quat();
 const _spheres = [{ off: 0, r: 0 }, { off: 0, r: 0 }, { off: 0, r: 0 }];
 const _contact: Contact = { nx: 0, ny: 1, nz: 0, depth: 0, hard: 1 };
 

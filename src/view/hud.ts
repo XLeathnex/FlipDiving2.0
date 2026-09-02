@@ -1,4 +1,4 @@
-import { clamp01, lerp } from '../core/vec.ts';
+import { clamp01 } from '../core/vec.ts';
 import type { HudState } from '../sim/game.ts';
 import type { DiveResult } from '../sim/scoring.ts';
 

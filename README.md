@@ -92,6 +92,7 @@ npm run simtest    # clearance, rotation, skill curve, 400 randomised dives
 node --experimental-strip-types tools/tune.ts        # careless vs skilled play
 node --experimental-strip-types tools/balance.ts     # score balance per spot
 node --experimental-strip-types tools/spotcheck.ts   # every spot still stands on rock
+node --experimental-strip-types tools/scooptest.ts   # the air scoop cannot become a rotation engine
 npm run build && npm run preview
 node tools/shot.mjs '[{"press":"Digit4"},{"wait":0.5},{"shot":"plank"}]'
 ```

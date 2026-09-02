@@ -1,5 +1,5 @@
-import { V3, Quat, clamp, clamp01, lerp, smoothstep } from '../core/vec.ts';
-import { DiverBody, TUNE, type DiverControl, type ImpactEvent } from './body.ts';
+import { V3, clamp, clamp01, lerp } from '../core/vec.ts';
+import { DiverBody, type DiverControl, type ImpactEvent } from './body.ts';
 import { Level, type Spot } from './level.ts';
 import { shapeName } from './pose.ts';
 import { gradeEntry, scoreDive, type DiveResult, type EntrySample, type DiveStats } from './scoring.ts';
