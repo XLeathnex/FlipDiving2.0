@@ -111,12 +111,20 @@ function vnoise(x: number, y: number, z: number): number {
  */
 function detail(x: number, y: number, z: number): number {
   const warp = vnoise(x * 0.031, y * 0.019, z * 0.031) - 0.5;
-  const bedding = Math.abs(Math.sin(y * 0.46 + warp * 5.6)); // 0 at a plane, 1 mid-bed
-  const broad = vnoise(x * 0.058, y * 0.041, z * 0.058) - 0.5;
+  // Bedding: horizontal planes that undulate. They cut IN, so ledges form on top.
+  const bedding = Math.abs(Math.sin(y * 0.44 + warp * 6.2));
+  // Joints: near-vertical fractures, so they barely vary with height. These are
+  // what give a limestone face its fluted, gullied look from a distance.
+  const jointN = vnoise(x * 0.105, y * 0.012, z * 0.105);
+  const joint = Math.abs(jointN - 0.5) * 2;                 // 0 along a crack
+  const broad = vnoise(x * 0.055, y * 0.038, z * 0.055) - 0.5;
   const mediumA = vnoise(x * 0.165, y * 0.135, z * 0.165) - 0.5;
-  const mediumB = vnoise(x * 0.42, y * 0.36, z * 0.42) - 0.5;
-  // Positive = pushed outward. Bedding planes cut IN, so ledges form on top.
-  return broad * 1.65 + mediumA * 0.62 + mediumB * 0.26 - (1 - bedding) * 0.30;
+  const mediumB = vnoise(x * 0.40, y * 0.34, z * 0.40) - 0.5;
+  return broad * 1.15
+    + mediumA * 0.46
+    + mediumB * 0.20
+    - (1 - bedding) * 0.26
+    - Math.max(0, 1 - joint * 3.9) * 0.92;
 }
 
 /** Polynomial smooth min -- gives rock the fused, weathered look of real stone. */
@@ -184,7 +192,7 @@ export class SdfField {
     }
     if (cut > -1e3) d = smax(d, cut, 1.2);
     // Only worth evaluating the detail near the surface, where it can matter.
-    if (d < 6 && d > -6) d = (d - detail(px, py, pz)) * 0.72;
+    if (d < 7 && d > -7) d = (d - detail(px, py, pz)) * 0.55;
     return d;
   }
 

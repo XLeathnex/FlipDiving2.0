@@ -52,9 +52,14 @@ function blend(a: PoseSet, b: PoseSet, t: number, out: PoseSet): PoseSet {
   return out;
 }
 
+// Kit chosen for legibility. In a tuck the body is a ball, so the only way to
+// read which way up you are is contrast between the parts: a dark vest on the
+// torso and upper arms, a hot accent at the hips, bare skin on the forearms and
+// shins. Rotation becomes visible as those bands sweeping past each other.
 const SKIN = 0xc98d63;
-const SUIT = 0xd4541f;      // strong warm accent: readable against sea and stone
-const SUIT_DARK = 0x1d2733;
+const VEST = 0x123642;      // deep teal: reads dark against both sea and stone
+const TRUNKS = 0xe2571c;    // hot accent at the hips, the eye's anchor point
+const HAIR = 0x1b1a19;
 
 function capsule(len: number, r: number, mat: THREE.Material): THREE.Mesh {
   const g = new THREE.CapsuleGeometry(r, Math.max(0.001, len), 4, 10);
@@ -96,24 +101,25 @@ export class Character {
   private t = 0;
 
   constructor() {
-    const skin = new THREE.MeshStandardMaterial({ color: SKIN, roughness: 0.62, metalness: 0.0 });
-    const suit = new THREE.MeshStandardMaterial({ color: SUIT, roughness: 0.55, metalness: 0.0 });
-    const dark = new THREE.MeshStandardMaterial({ color: SUIT_DARK, roughness: 0.48, metalness: 0.0 });
+    const skin = new THREE.MeshStandardMaterial({ color: SKIN, roughness: 0.58, metalness: 0.0 });
+    const vest = new THREE.MeshStandardMaterial({ color: VEST, roughness: 0.52, metalness: 0.0 });
+    const trunks = new THREE.MeshStandardMaterial({ color: TRUNKS, roughness: 0.56, metalness: 0.0 });
+    const dark = new THREE.MeshStandardMaterial({ color: HAIR, roughness: 0.62, metalness: 0.0 });
 
     this.root.add(this.pelvis);
 
     // Pelvis + chest, with the chest pivoting at the waist.
-    const hips = capsule(0.10, 0.135, suit);
+    const hips = capsule(0.10, 0.135, trunks);
     hips.position.y = 0.02;
     this.pelvis.add(hips);
 
     this.chest.position.y = 0.13;
     this.pelvis.add(this.chest);
-    const torso = capsule(0.30, 0.145, skin);
+    const torso = capsule(0.30, 0.145, vest);
     torso.position.y = 0.20;
     torso.scale.set(1.06, 1, 0.82);
     this.chest.add(torso);
-    const shoulders = capsule(0.16, 0.115, skin);
+    const shoulders = capsule(0.16, 0.115, vest);
     shoulders.position.y = 0.385;
     shoulders.rotation.z = Math.PI / 2;
     shoulders.scale.set(1, 1, 0.85);
@@ -140,7 +146,7 @@ export class Character {
       const thigh = new THREE.Group();
       thigh.position.set(side * 0.085, -0.02, 0);
       this.pelvis.add(thigh);
-      const thighMesh = capsule(0.30, 0.088, suit);
+      const thighMesh = capsule(0.30, 0.088, trunks);
       thighMesh.position.y = -0.19;
       thigh.add(thighMesh);
       this.thighs.push(thigh);
@@ -166,7 +172,7 @@ export class Character {
       const ua = new THREE.Group();
       ua.position.set(side * 0.155, 0.375, 0);
       this.chest.add(ua);
-      const uaMesh = capsule(0.22, 0.058, skin);
+      const uaMesh = capsule(0.22, 0.058, vest);
       uaMesh.position.y = -0.145;
       ua.add(uaMesh);
       this.upperArms.push(ua);

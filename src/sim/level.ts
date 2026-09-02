@@ -52,8 +52,10 @@ export class Level implements CollisionWorld {
   constructor() {
     this.buildRock();
     this.buildProps();
-    this.buildSpots();
+    // The broadphase must exist before anything can query the field, and
+    // buildSpots ray-marches it to find each standing surface.
     this.rock.build();
+    this.buildSpots();
   }
 
   // ---------------------------------------------------------------- geometry
@@ -65,11 +67,11 @@ export class Level implements CollisionWorld {
     // then vertical buttress ribs down the seaward face. Those ribs are what
     // makes real limestone sea cliffs read as tall: the eye follows the flutes.
     R.add(
-      box(-31, 12, -2, 18, 26, 30, 2.2, 0.07, 2.4),
-      box(-34, 33, -4, 15, 12, 24, 2.0, -0.12, 2.6),
-      box(-39, 43, 1, 12, 8, 17, 1.8, 0.10, 2.6),
-      box(-26, 4, 18, 12, 12, 12, 1.8, 0.30, 2.6),
-      box(-25, 3, -26, 13, 11, 12, 1.8, -0.24, 2.6),
+      box(-31, 12, -2, 18, 26, 30, 1.2, 0.07, 1.1),
+      box(-34, 33, -4, 15, 12, 24, 1.0, -0.12, 1.2),
+      box(-39, 43, 1, 12, 8, 17, 0.9, 0.10, 1.2),
+      box(-26, 4, 18, 12, 12, 12, 0.9, 0.30, 1.3),
+      box(-25, 3, -26, 13, 11, 12, 0.9, -0.24, 1.3),
     );
 
     // Buttress ribs on the face, at varied heights so the skyline is not level.
@@ -83,13 +85,13 @@ export class Level implements CollisionWorld {
       [-15.5, 20.0, 14.0, -19.0, 2.8],
     ];
     for (const [xt, zt, topY, xb, r] of ribs) {
-      R.add(capsule(xb, -10, zt, xt, topY, zt, r, 2.0));
+      R.add(capsule(xb, -10, zt, xt, topY, zt, r, 1.1));
     }
 
     // Overhangs and a couple of caves cut into the face.
     R.add(
-      box(-15.5, 30.5, -3.0, 4.0, 2.6, 6.0, 1.0, 0.16, 2.0),
-      box(-16.0, 19.0, 11.0, 3.4, 2.2, 5.0, 1.0, -0.14, 2.0),
+      box(-15.5, 30.5, -3.0, 4.0, 2.6, 6.0, 0.6, 0.16, 1.0),
+      box(-16.0, 19.0, 11.0, 3.4, 2.2, 5.0, 0.6, -0.14, 1.0),
     );
     R.add(
       carve(capsule(-11.5, 2.0, -8.0, -16.5, 3.4, -8.4, 2.9, 1.6)),
@@ -173,6 +175,27 @@ export class Level implements CollisionWorld {
     );
   }
 
+  /**
+   * Find the standing surface below a point. Spots resolve their own height
+   * this way rather than carrying a hardcoded number, so retuning the rock can
+   * never quietly leave a diver spawning inside a cliff or hovering above one.
+   */
+  surfaceBelow(x: number, z: number, fromY: number): number {
+    for (const p of this.props) {
+      if (Math.abs(x - p.x) <= p.hx && Math.abs(z - p.z) <= p.hz && p.y + p.hy <= fromY) {
+        return p.y + p.hy;
+      }
+    }
+    let y = fromY;
+    let d = this.rock.sample(x, y, z);
+    for (let i = 0; i < 400 && y > -6; i++) {
+      if (d < 0.015) return y;
+      y -= Math.max(0.02, Math.min(d * 0.6, 1.0));
+      d = this.rock.sample(x, y, z);
+    }
+    return y;
+  }
+
   private buildSpots() {
     this.spots = [
       { id: 'shelf', name: 'The Shelf', pos: new V3(-4.9, 6.58, 6.0), yaw: 0.10, height: 6.6, blurb: 'Low and forgiving. Learn the timing here.' },
@@ -181,6 +204,11 @@ export class Level implements CollisionWorld {
       { id: 'plank', name: 'The Plank', pos: new V3(-3.2, 27.92, -0.4), yaw: 0.0, height: 27.9, blurb: 'Weathered timber, deep water, nothing in the way.' },
       { id: 'mast', name: 'The Mast', pos: new V3(18.4, 33.82, -18.3), yaw: -0.05, height: 33.8, blurb: 'Four seconds of falling. Do something with them.' },
     ];
+    // Resolve each spot onto the surface that is actually there.
+    for (const s of this.spots) {
+      s.pos.y = this.surfaceBelow(s.pos.x, s.pos.z, s.pos.y + 6);
+      s.height = s.pos.y - this.seaY;
+    }
   }
 
   // ------------------------------------------------------------------- water
@@ -202,12 +230,18 @@ export class Level implements CollisionWorld {
     return out.set(-hx / (2 * e), 1, -hz / (2 * e)).normalize();
   }
 
-  /** Seabed: shelves up steeply against the headland, deep out in the bay. */
+  /**
+   * Seabed, derived from distance to the rock rather than from a coordinate
+   * ramp. That gives every stack and boulder its own steep sandy collar and
+   * leaves the middle of the bay properly deep, which is both what a limestone
+   * coast actually looks like and what the game wants: nowhere you would
+   * plausibly land is shallow.
+   */
   bedHeight(x: number, z: number): number {
-    const toShore = smoothstep(-14, 14, x);
-    const base = -3.2 - 15.0 * toShore;
-    const ripple = 0.9 * Math.sin(x * 0.09 + z * 0.13) + 0.6 * Math.cos(x * 0.17 - z * 0.07);
-    return Math.min(-1.2, base + ripple * (0.3 + 0.7 * toShore));
+    const toRock = Math.max(0, this.rock.sample(x, 0.3, z));
+    const ripple = 0.8 * Math.sin(x * 0.09 + z * 0.13) + 0.5 * Math.cos(x * 0.17 - z * 0.07);
+    const shelf = -1.1 - toRock * 2.45 - Math.max(0, toRock - 7) * 1.1;
+    return Math.max(-26, Math.min(-1.1, shelf + ripple * Math.min(1, toRock * 0.25)));
   }
 
   /** Water depth below the surface at (x, z). Used for splash + murk shading. */

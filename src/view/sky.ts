@@ -5,7 +5,7 @@ import * as THREE from 'three';
  * more "correct" but harder to art-direct; this is cheaper and lets me put the
  * warmth exactly where the composition wants it.
  */
-export const SUN_DIR = new THREE.Vector3(0.60, 0.50, -0.62).normalize();
+export const SUN_DIR = new THREE.Vector3(0.66, 0.335, -0.67).normalize();
 
 const skyVert = /* glsl */`
 varying vec3 vDir;
@@ -38,9 +38,9 @@ void main() {
   float h = clamp(d.y, -1.0, 1.0);
   float up = max(h, 0.0);
 
-  vec3 zenith  = vec3(0.115, 0.255, 0.520);
-  vec3 mid     = vec3(0.400, 0.560, 0.760);
-  vec3 horizon = vec3(0.830, 0.790, 0.720);
+  vec3 zenith  = vec3(0.088, 0.212, 0.470);
+  vec3 mid     = vec3(0.310, 0.478, 0.700);
+  vec3 horizon = vec3(0.680, 0.672, 0.640);
 
   vec3 col = mix(mid, zenith, pow(up, 0.62));
   col = mix(horizon, col, smoothstep(-0.02, 0.34, h));
@@ -61,7 +61,7 @@ void main() {
   }
 
   // Sea haze below the horizon line.
-  col = mix(vec3(0.62, 0.66, 0.68), col, smoothstep(-0.30, 0.01, h));
+  col = mix(vec3(0.470, 0.540, 0.585), col, smoothstep(-0.30, 0.01, h));
   gl_FragColor = vec4(col, 1.0);
 }`;
 

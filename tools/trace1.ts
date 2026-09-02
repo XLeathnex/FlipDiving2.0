@@ -1,6 +1,6 @@
 import { Game, type GameInput } from '../src/sim/game.ts';
 const g = new Game(); g.selectSpot(3);
-const inp: GameInput = { jump: false, stretch: false, rot: 0, restart: false, spotDelta: 0 };
+const inp: GameInput = { jump: false, jumpEdge: false, stretch: false, rot: 0, restart: false, spotDelta: 0 };
 let t = 0, launchT = -1;
 const dt = 1/120;
 console.log('  t     y      vy     spd   shape  wx     som    mode    phase');

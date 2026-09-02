@@ -152,7 +152,7 @@ export function buildRockMesh(field: SdfField, cell: number, pad = 1.5): RockMes
     normals[v * 3] = g.x; normals[v * 3 + 1] = g.y; normals[v * 3 + 2] = g.z;
     up[v] = g.y * 0.5 + 0.5;
     let occ = 0, w = 0;
-    for (let s = 1; s <= 5; s++) {
+    for (let s = 1; s <= 4; s++) {
       const t = s * cell * 0.9;
       const d = field.sample(px + g.x * t, py + g.y * t, pz + g.z * t);
       occ += (t - d) / t * (1 / s);

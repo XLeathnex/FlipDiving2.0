@@ -98,11 +98,11 @@ void main() {
   depth = mix(depth, 24.0, clamp(outside * 3.0, 0.0, 1.0));
 
   // --- Body colour: shallow turquoise over sand, deep ink offshore.
-  vec3 shallow = vec3(0.180, 0.560, 0.545);
-  vec3 mid     = vec3(0.055, 0.268, 0.330);
-  vec3 deep    = vec3(0.014, 0.070, 0.125);
-  vec3 body = mix(shallow, mid, smoothstep(0.6, 6.0, depth));
-  body = mix(body, deep, smoothstep(5.0, 17.0, depth));
+  vec3 shallow = vec3(0.185, 0.455, 0.455);
+  vec3 mid     = vec3(0.038, 0.183, 0.258);
+  vec3 deep    = vec3(0.010, 0.055, 0.100);
+  vec3 body = mix(shallow, mid, smoothstep(0.3, 4.6, depth));
+  body = mix(body, deep, smoothstep(4.0, 15.0, depth));
 
   // Sun scattering through the wave backs makes the sea look lit, not painted.
   float back = pow(max(dot(V, -normalize(uSun - n * 0.6)), 0.0), 3.0);
@@ -122,7 +122,7 @@ void main() {
   // --- Foam. Wave crests, a collar around every rock, and a widening ring
   //     where the diver went in.
   float crest = smoothstep(0.055, 0.115, waveHeight(p, t)) * smoothstep(0.45, 0.85, fbm2(p * 2.2 + t * 0.25));
-  float collar = 1.0 - smoothstep(0.0, 2.6, toRock);
+  float collar = 1.0 - smoothstep(0.0, 2.1, toRock);
   collar *= 0.42 + 0.58 * fbm2(p * 2.6 + vec2(sin(t * 0.7) * 0.3, t * 0.16));
   collar *= 0.55 + 0.45 * sin(t * 1.6 + toRock * 2.2);
 
@@ -130,18 +130,18 @@ void main() {
   if (uSplashT >= 0.0) {
     float rr = length(p - uSplashP.xz);
     float age = uSplashT;
-    float rad = age * 7.5;
-    ring = smoothstep(1.4, 0.0, abs(rr - rad)) * exp(-age * 1.5) * smoothstep(0.02, 0.2, age);
-    ring += smoothstep(rad * 0.75, 0.0, rr) * exp(-age * 2.6) * 0.7;
+    float rad = 0.8 + age * 5.2;
+    ring = smoothstep(1.1, 0.0, abs(rr - rad)) * exp(-age * 1.9) * smoothstep(0.02, 0.18, age);
+    ring += smoothstep(rad * 0.7, 0.0, rr) * exp(-age * 3.4) * 0.45;
   }
 
-  float foam = clamp(crest * 0.5 + collar * 0.95 + ring, 0.0, 1.0);
+  float foam = clamp(crest * 0.45 + collar * 0.80 + ring, 0.0, 1.0);
   foam *= 0.35 + 0.65 * fbm2(p * 6.5 + t * 0.4);
   col = mix(col, vec3(0.93, 0.965, 0.975), clamp(foam, 0.0, 0.92));
 
   // Distance haze so the sea meets the sky instead of ending at a hard line.
-  float haze = smoothstep(140.0, 620.0, dist);
-  col = mix(col, vec3(0.655, 0.700, 0.735), haze);
+  float haze = smoothstep(230.0, 950.0, dist);
+  col = mix(col, vec3(0.470, 0.545, 0.600), haze);
 
   gl_FragColor = vec4(col, 1.0);
 }`;

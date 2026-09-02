@@ -40,7 +40,8 @@ const CSS = `
 #ladder .mark { position: absolute; left: 8px; width: 16px; height: 1px; background: rgba(255,255,255,.30); }
 #ladder .diver { position: absolute; left: 8px; width: 16px; height: 2px; background: var(--warm); box-shadow: 0 0 12px var(--warm); border-radius: 2px; }
 #ladder .alt { position: absolute; left: 34px; font-size: 12px; font-variant-numeric: tabular-nums; transform: translateY(-50%); white-space: nowrap; }
-#ladder .ttw { position: absolute; left: 34px; bottom: -4px; font-size: 10.5px; letter-spacing: .12em; color: var(--dim); text-transform: uppercase; }
+#ladder .ttw { position: absolute; left: 34px; bottom: -20px; font-size: 11px; letter-spacing: .1em; color: var(--dim); font-variant-numeric: tabular-nums; }
+#ladder .sealbl { position: absolute; left: 34px; bottom: 4px; font-size: 9.5px; letter-spacing: .18em; text-transform: uppercase; color: rgba(242,245,248,.38); }
 
 /* Live rotation readout. */
 #rot { position: absolute; left: 50%; top: 15%; transform: translateX(-50%); text-align: center; opacity: 0; transition: opacity .14s; }
@@ -60,7 +61,8 @@ const CSS = `
 #spin .f { position: absolute; top: 0; bottom: 0; background: #7fd2ff; border-radius: 3px; }
 
 /* Result. Appears fast, never blocks the retry. */
-#result { position: absolute; left: 50%; top: 46%; transform: translate(-50%,-50%); text-align: center; opacity: 0; transition: opacity .16s; }
+#result { position: absolute; left: 50%; top: 44%; transform: translate(-50%,-50%); text-align: center; opacity: 0; transition: opacity .16s; padding: 30px 54px; border-radius: 24px;
+  background: radial-gradient(closest-side, rgba(6,16,26,.62), rgba(6,16,26,.34) 62%, rgba(6,16,26,0)); }
 #result.on { opacity: 1; }
 #result .grade { font-size: 62px; font-weight: 700; letter-spacing: -.035em; line-height: 1; }
 #result .grade.good { color: #8ef0c9; }
@@ -82,7 +84,7 @@ const CSS = `
 /* Help. */
 #help { position: absolute; left: 50%; bottom: 26px; transform: translateX(-50%); display: flex; gap: 20px; font-size: 11.5px; color: var(--dim); transition: opacity .35s; }
 #help b { color: var(--ink); font-weight: 600; }
-#hint { position: absolute; left: 50%; bottom: 22%; transform: translateX(-50%); font-size: 13px; color: rgba(242,245,248,.72); transition: opacity .3s; text-align: center; }
+#hint { position: absolute; left: 50%; bottom: 8.5%; transform: translateX(-50%); font-size: 13px; color: rgba(242,245,248,.72); transition: opacity .3s; text-align: center; }
 #blurb { position: absolute; left: 22px; bottom: 26px; font-size: 12.5px; color: var(--dim); max-width: 290px; line-height: 1.45; transition: opacity .3s; }
 .hide { opacity: 0 !important; }
 
@@ -130,7 +132,8 @@ export class Hud {
         <div class="mark" id="m1"></div><div class="mark" id="m2"></div><div class="mark" id="m3"></div>
         <div class="diver" id="dmark"></div>
         <div class="alt" id="altTxt">0 m</div>
-        <div class="ttw" id="ttwTxt">Sea level</div>
+        <div class="sealbl">Sea</div>
+        <div class="ttw" id="ttwTxt"></div>
       </div>
       <div id="rot"><div class="n" id="rotN">0</div><div class="d" id="rotD">Rotations</div></div>
       <div id="takeoff">
@@ -200,7 +203,7 @@ export class Hud {
       (this.q.dmark as HTMLElement).style.bottom = `${f * 100}%`;
       (this.q.altTxt as HTMLElement).style.bottom = `${f * 100}%`;
       this.q.altTxt.textContent = `${Math.max(0, h.toWater).toFixed(0)} m`;
-      this.q.ttwTxt.textContent = airborne && h.toWater > 0.5 ? `${h.timeToWater.toFixed(1)}s` : 'Sea level';
+      this.q.ttwTxt.textContent = airborne && h.toWater > 0.5 ? `${h.timeToWater.toFixed(1)}s to water` : '';
       for (let i = 0; i < 3; i++) {
         const frac = (i + 1) / 4;
         (this.q['m' + (i + 1)] as HTMLElement).style.bottom = `${frac * 100}%`;

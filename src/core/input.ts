@@ -7,6 +7,13 @@ import { clamp } from './vec.ts';
  */
 export interface Intent {
   jump: boolean;
+  /**
+   * True if the jump control went down at any point since the last poll, even
+   * if it was released again before this frame. Sampling held state alone drops
+   * very short taps, and on a retry screen a dropped tap feels like the game
+   * ignored you.
+   */
+  jumpEdge: boolean;
   stretch: boolean;
   rot: number;
   restart: boolean;
@@ -21,8 +28,10 @@ export class Input {
   private down = new Set<string>();
   private pressed = new Set<string>();
   private mouse = [false, false];
+  /** Set by the pointer/touch handlers; consumed by the next poll. */
+  private tapped = false;
   intent: Intent = {
-    jump: false, stretch: false, rot: 0, restart: false,
+    jump: false, jumpEdge: false, stretch: false, rot: 0, restart: false,
     spotDelta: 0, spotIndex: -1, toggleHelp: false, toggleMute: false, anyPress: false,
   };
   onFirstInput: (() => void) | null = null;
@@ -43,7 +52,11 @@ export class Input {
     window.addEventListener('keyup', (e) => key(e, false));
     window.addEventListener('blur', () => { this.down.clear(); this.mouse[0] = this.mouse[1] = false; });
 
-    el.addEventListener('mousedown', (e) => { this.mouse[e.button === 2 ? 1 : 0] = true; this.fireFirst(); e.preventDefault(); });
+    el.addEventListener('mousedown', (e) => {
+      this.mouse[e.button === 2 ? 1 : 0] = true;
+      if (e.button !== 2) this.tapped = true;
+      this.fireFirst(); e.preventDefault();
+    });
     window.addEventListener('mouseup', (e) => { this.mouse[e.button === 2 ? 1 : 0] = false; });
     el.addEventListener('contextmenu', (e) => e.preventDefault());
 
@@ -52,7 +65,8 @@ export class Input {
     el.addEventListener('touchstart', (e) => {
       this.fireFirst();
       for (const t of Array.from(e.changedTouches)) {
-        if (t.clientX < window.innerWidth * 0.35) this.mouse[1] = true; else this.mouse[0] = true;
+        if (t.clientX < window.innerWidth * 0.35) this.mouse[1] = true;
+        else { this.mouse[0] = true; this.tapped = true; }
       }
       e.preventDefault();
     }, { passive: false });
@@ -72,6 +86,8 @@ export class Input {
   poll(): Intent {
     const i = this.intent;
     i.jump = this.has('Space', 'ArrowDown', 'KeyS') || this.mouse[0];
+    i.jumpEdge = i.jump || this.tapped || this.hit('Space', 'ArrowDown', 'KeyS');
+    this.tapped = false;
     i.stretch = this.has('ArrowUp', 'KeyW') || this.mouse[1];
     i.rot = (this.has('KeyD', 'ArrowRight') ? 1 : 0) - (this.has('KeyA', 'ArrowLeft') ? 1 : 0);
     i.restart = this.hit('KeyR', 'Enter');

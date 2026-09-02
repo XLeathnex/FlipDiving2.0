@@ -4,7 +4,7 @@
  */
 import { Game, type GameInput } from '../src/sim/game.ts';
 
-const NO: GameInput = { jump: false, stretch: false, rot: 0, restart: false, spotDelta: 0 };
+const NO: GameInput = { jump: false, jumpEdge: false, stretch: false, rot: 0, restart: false, spotDelta: 0 };
 
 export interface Plan {
   spot: number;
@@ -46,7 +46,7 @@ export function runDive(plan: Plan, dt = 1 / 120): Trace {
 
   for (let step = 0; step < 3000; step++) {
     const air = launchT >= 0 ? t - launchT : -1;
-    inp.jump = false; inp.stretch = false; inp.rot = 0;
+    inp.jump = false; inp.stretch = false; inp.rot = 0; inp.jumpEdge = false;
     if (launchT < 0) {
       inp.jump = t < plan.charge;
       inp.rot = t < plan.spinHold ? plan.spinDir : 0;

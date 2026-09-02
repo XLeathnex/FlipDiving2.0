@@ -9,6 +9,8 @@ export type Phase = 'ready' | 'charge' | 'air' | 'result';
 export interface GameInput {
   /** Held. On the ground: charge. In the air: tuck. */
   jump: boolean;
+  /** Went down at some point since the last frame, however briefly. */
+  jumpEdge: boolean;
   /** Held. In the air: stretch to layout. */
   stretch: boolean;
   /** -1 back / +1 front. On the ground: takeoff rotation. In the air: scoop. */
@@ -125,8 +127,18 @@ export class Game {
       this.selectSpot(this.spotIndex + input.spotDelta);
       return;
     }
-    if (input.restart && (this.phase !== 'result' || this.sinceResult > 0.12)) {
-      if (this.phase !== 'ready' || this.sinceSpawn > 0.1) { this.spawn(); return; }
+    // Retrying has to be immediate. A fresh press of the jump key during the
+    // result restarts straight away, and because it is the same key you charge
+    // the next jump with, holding it through the restart just starts loading
+    // the next attempt. Crash, read the word, and you are already going again.
+    const jumpEdge = input.jumpEdge && !this.prevJump;
+    const wantsRestart = input.restart || (this.phase === 'result' && jumpEdge && this.sinceResult > 0.22);
+    if (wantsRestart && (this.phase !== 'result' || this.sinceResult > 0.22)) {
+      if (this.phase !== 'ready' || this.sinceSpawn > 0.1) {
+        this.prevJump = input.jump;
+        this.spawn();
+        return;
+      }
     }
 
     switch (this.phase) {

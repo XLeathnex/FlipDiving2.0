@@ -75,29 +75,42 @@ export class CameraDirector {
     const wantProfile = game.phase === 'ready' || game.phase === 'charge' ? 0 : 1;
     this.profile = damp(this.profile, wantProfile, 2.4, dt);
 
-    let dist: number, camY: number, sideBias: number, backBias: number;
+    let dist: number, camY: number, sideBias: number, outBias: number;
 
     if (!airborne) {
-      // Staging: three-quarter view from below the lip, so the drop reads.
-      dist = 6.4;
-      sideBias = 0.80;
-      backBias = -0.62;
-      camY = b.pos.y + 1.05 - smoothstep(0, 1, game.charge) * 0.5;
-      // Pull further out from tall spots so the height is legible.
-      dist += smoothstep(6, 36, spot.height) * 2.2;
+      // Staging. The camera hangs out over the water and looks back at the
+      // diver, which is the only arrangement that shows all three things at
+      // once: the person, the cliff they are standing on, and the drop. Sitting
+      // behind them instead puts the lens in the rock and frames a horizon.
+      dist = 8.6 + Math.min(spot.height, 40) * 0.105;
+      sideBias = 0.90;
+      outBias = 0.36;
+      camY = b.pos.y + 2.5 + spot.height * 0.020 - smoothstep(0, 1, game.charge) * 0.7;
     } else {
-      // Tracking: distance grows with remaining drop so the arc stays framed.
+      // Tracking. Distance grows with the remaining drop so the arc stays
+      // framed, but stays close enough that the body is always big enough to
+      // read -- the player is judging their own body angle off these pixels.
       const drop = Math.max(h, 4);
-      dist = clamp(7.2 + drop * 0.155, 7.2, 17.5);
-      sideBias = lerp(0.86, 1.0, this.profile);
-      backBias = lerp(-0.5, -0.06, this.profile);
+      dist = clamp(6.1 + drop * 0.105, 6.1, 12.6);
+      sideBias = lerp(0.90, 1.0, this.profile);
+      outBias = lerp(0.30, 0.09, this.profile);
       // Sit below the diver, biased toward the water, so you can see it coming.
-      camY = lerp(b.pos.y, waterY + 2.6, clamp01(0.30 + urgency * 0.22));
-      camY = Math.max(camY, waterY + 1.4);
+      camY = lerp(b.pos.y, waterY + 3.0, clamp01(0.28 + urgency * 0.20));
+      camY = Math.max(camY, waterY + 2.2);
+      // Once the dive is over, settle back and watch the splash rather than
+      // chasing a body that is now sinking past the lens.
+      if (game.phase === 'result') {
+        // Rise and pull back promptly. Sitting at wave height inside your own
+        // splash is atmospheric for about a third of a second and then it is
+        // just a white screen with a score hidden behind it.
+        const t = clamp01(game.sinceResult * 2.4);
+        dist = lerp(dist, 13.5, t);
+        camY = Math.max(lerp(camY, waterY + 7.5, t), waterY + 2.4);
+      }
     }
 
-    const desiredX = b.pos.x + sx * sideBias * dist + fx * backBias * dist;
-    const desiredZ = b.pos.z + sz * sideBias * dist + fz * backBias * dist;
+    const desiredX = b.pos.x + sx * sideBias * dist + fx * outBias * dist;
+    const desiredZ = b.pos.z + sz * sideBias * dist + fz * outBias * dist;
     _v.set(desiredX, camY, desiredZ);
 
     // Controlled lag: loose while falling for a sense of speed, tight when the
@@ -115,15 +128,19 @@ export class CameraDirector {
       const push = 1.15 - d;
       this.pos.x += _g.x * push; this.pos.y += _g.y * push; this.pos.z += _g.z * push;
     }
-    this.pos.y = Math.max(this.pos.y, waterY + 0.55);
+    this.pos.y = Math.max(this.pos.y, waterY + (airborne ? 2.2 : 0.8));
 
-    // --- Look target: between the diver and where they are going to land.
-    const lead = airborne ? clamp01(0.34 - urgency * 0.34) : 0;
-    _look.set(
-      lerp(b.pos.x, _p.x, lead),
-      lerp(b.pos.y, _p.y, lead) + (airborne ? 0.2 : -0.35),
-      lerp(b.pos.z, _p.z, lead),
-    );
+    // --- Look target: down the drop while staging, then between the diver and
+    //     where they are going to land once they are falling.
+    if (!airborne) {
+      _look.set(b.pos.x + fx * 2.0, b.pos.y - 0.5 - h * 0.095, b.pos.z + fz * 2.0);
+    } else {
+      const lead = clamp01(0.26 - urgency * 0.26);
+      const ty = game.phase === 'result'
+        ? lerp(b.pos.y, waterY + 0.4, clamp01(game.sinceResult * 1.6))
+        : lerp(b.pos.y, _p.y, lead) + 0.2;
+      _look.set(lerp(b.pos.x, _p.x, lead), ty, lerp(b.pos.z, _p.z, lead));
+    }
     this.target.x = damp(this.target.x, _look.x, posRate * 1.5, dt);
     this.target.y = damp(this.target.y, _look.y, posRate * 1.5, dt);
     this.target.z = damp(this.target.z, _look.z, posRate * 1.5, dt);

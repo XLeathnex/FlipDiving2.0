@@ -38,12 +38,17 @@ await page.evaluate(() => {
   (window).__realNow = real;
 });
 
-async function advance(seconds, fps = 60) {
-  const n = Math.round(seconds * fps);
-  for (let i = 0; i < n; i++) {
-    await page.evaluate((ms) => (window).__step(ms), 1000 / fps);
-    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
-  }
+// SwiftShader renders a 200k-triangle scene slowly, so drive the loop in as few
+// round-trips as possible: batch the whole advance into one page call.
+async function advance(seconds, fps = 40) {
+  const n = Math.max(1, Math.round(seconds * fps));
+  await page.evaluate(async ([n, ms]) => {
+    for (let i = 0; i < n; i++) {
+      (window).__step(ms);
+      await new Promise((r) => requestAnimationFrame(() => r(null)));
+    }
+    await new Promise((r) => requestAnimationFrame(() => r(null)));
+  }, [n, 1000 / fps]);
 }
 
 let shotN = 0;

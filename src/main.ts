@@ -10,6 +10,7 @@ import { Character } from './view/character.ts';
 import { CameraDirector } from './view/camera.ts';
 import { Particles, Trail } from './view/fx.ts';
 import { Hud, showLoader } from './view/hud.ts';
+import { Post } from './view/post.ts';
 import { Audio } from './audio/audio.ts';
 
 const loader = showLoader();
@@ -24,9 +25,11 @@ const renderer = new THREE.WebGLRenderer({
   preserveDrawingBuffer: CAPTURE,
 });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+// The scene renders linear into a float target; tone mapping happens in the
+// composite, after bloom, which is the only order that blooms highlights
+// instead of mid-tones.
 renderer.outputColorSpace = THREE.SRGBColorSpace;
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.0;
+renderer.toneMapping = THREE.NoToneMapping;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
@@ -36,6 +39,7 @@ const director = new CameraDirector(innerWidth / innerHeight);
 const input = new Input();
 const hud = new Hud();
 const audio = new Audio();
+const post = new Post(renderer);
 
 const sky = makeSky();
 sky.scale.setScalar(2200);
@@ -45,7 +49,7 @@ scene.environment = env;
 
 // --- Lighting. Late afternoon: a warm low key light, cool sky fill, and a weak
 // bounce from the water so undersides are not dead black.
-const sun = new THREE.DirectionalLight(0xffdcb4, 3.35);
+const sun = new THREE.DirectionalLight(0xffd2a0, 3.9);
 sun.position.copy(SUN_DIR).multiplyScalar(120);
 sun.castShadow = true;
 // One shadow camera fixed over the cove rather than chasing the diver. The
@@ -65,7 +69,7 @@ sun.position.copy(SHADOW_CENTRE).addScaledVector(SUN_DIR, 190);
 scene.add(sun);
 scene.add(sun.target);
 
-scene.add(new THREE.HemisphereLight(0x9fc4e8, 0x243437, 0.20));
+scene.add(new THREE.HemisphereLight(0x8fb6e0, 0x1e2c30, 0.26));
 const bounce = new THREE.DirectionalLight(0x62a9bd, 0.22);
 bounce.position.set(0.3, -1, 0.4);
 scene.add(bounce);
@@ -84,7 +88,7 @@ let rockMat: THREE.MeshStandardMaterial | null = null;
 // --- Mesh the cove in a worker so the loading screen stays alive.
 const t0 = performance.now();
 const mesher = new Worker(new URL('./view/mesh.worker.ts', import.meta.url), { type: 'module' });
-mesher.postMessage({ cell: 0.46 });
+mesher.postMessage({ cell: 0.5 });
 mesher.onmessage = (e) => {
   const { mesh, tris } = rockFromMesh(game.level, e.data);
   rockMat = mesh.material as THREE.MeshStandardMaterial;
@@ -112,7 +116,9 @@ let ready = false;
 function resize() {
   const w = innerWidth, h = innerHeight;
   renderer.setSize(w, h, false);
-  particles.setPixelScale(h * renderer.getPixelRatio());
+  const px = renderer.getPixelRatio();
+  post.resize(Math.max(1, Math.round(w * px)), Math.max(1, Math.round(h * px)));
+  particles.setPixelScale(h * px, director.cam.fov);
 }
 addEventListener('resize', resize);
 resize();
@@ -121,15 +127,22 @@ resize();
 
 const _hp = new THREE.Vector3();
 let prev = performance.now();
-let lastPhase = game.phase;
-let approachCue = false;
-let helpTimer = 0;
+let flash = 0;
 
-function frame(now: number) {
+function frame() {
   requestAnimationFrame(frame);
+  // performance.now() rather than the rAF timestamp: identical in practice, and
+  // it lets the headless harness drive the clock deterministically.
+  const now = performance.now();
   let dt = Math.min((now - prev) / 1000, 0.05);
   prev = now;
-  if (!ready) { renderer.render(scene, director.cam); return; }
+  if (!ready) {
+    renderer.setRenderTarget(post.target);
+    renderer.clear();
+    renderer.render(scene, director.cam);
+    post.render(0);
+    return;
+  }
 
   const intent = input.poll();
   if (intent.toggleMute) audio.setMuted(!audio.muted);
@@ -140,9 +153,8 @@ function frame(now: number) {
   // collision, short enough that it never eats an input.
   const scale = director.consumeTimeScale(dt);
 
-  const before = game.phase;
   game.update(dt * scale, {
-    jump: intent.jump, stretch: intent.stretch, rot: intent.rot,
+    jump: intent.jump, jumpEdge: intent.jumpEdge, stretch: intent.stretch, rot: intent.rot,
     restart: intent.restart, spotDelta: intent.spotDelta,
   });
   if (intent.spotDelta) { hud.setSpots(game.level.spots, game.spotIndex); audio.ui(); }
@@ -157,7 +169,6 @@ function frame(now: number) {
         trail.reset(_hp.set(b.pos.x, b.pos.y, b.pos.z));
         particles.clear();
         hud.setSpots(lvl.spots, game.spotIndex);
-        approachCue = false;
         break;
       case 'charge':
         audio.charge();
@@ -170,6 +181,7 @@ function frame(now: number) {
       case 'crash':
         director.kick(0.95);
         director.freeze(0.085);
+        flash = 0.55;
         break;
       case 'impact':
         if (ev.e.kind === 'solid') {
@@ -215,6 +227,7 @@ function frame(now: number) {
   if (b.submerged > 0.3 && speed > 1.5) {
     particles.bubbles(b.pos.x, b.pos.y, b.pos.z, speed, dt);
   }
+  particles.setPixelScale(innerHeight * renderer.getPixelRatio(), cam.fov);
   particles.update(dt, waterY);
 
   // Wind rises with airspeed; the last moment before the water tightens it.
@@ -222,7 +235,6 @@ function frame(now: number) {
   const h = game.hud();
   if (game.phase === 'air') {
     audio.approach(h.timeToWater);
-    if (!approachCue && h.timeToWater < 0.9 && h.toWater > 1) approachCue = true;
   }
 
   (sky.material as THREE.ShaderMaterial).uniforms.uTime.value = game.time;
@@ -233,6 +245,12 @@ function frame(now: number) {
   hud.update(h, game.result, game.sinceResult, game.spot.blurb, game.best, game.lastScore);
   hud.showSpots(game.phase === 'ready' || game.phase === 'result');
 
+  // Impact flash: a very short lift on the frame a crash lands.
+  flash = Math.max(0, flash - dt * 5.5);
+  post.flash = flash * 0.5;
+
+  renderer.setRenderTarget(post.target);
+  renderer.clear();
   if (debugView) {
     sky.position.copy(debugCam.position);
     water.update(game.time, debugCam.position);
@@ -240,7 +258,7 @@ function frame(now: number) {
   } else {
     renderer.render(scene, cam);
   }
-  lastPhase = before;
+  post.render(game.time);
 }
 requestAnimationFrame(frame);
 
@@ -267,7 +285,7 @@ let debugView = false;
     if ('sun' in opts) sun.intensity = opts.sun;
     if ('hemi' in opts) (scene.children.find((c) => c instanceof THREE.HemisphereLight) as any).intensity = opts.hemi;
     if ('bounce' in opts) bounce.intensity = opts.bounce;
-    if ('exposure' in opts) renderer.toneMappingExposure = opts.exposure;
+    if ('exposure' in opts) post.exposure = opts.exposure;
     if ('env' in opts) { scene.environment = opts.env ? env : null; }
     if ('envInt' in opts && rockMat) rockMat.envMapIntensity = opts.envInt;
     if ('shadows' in opts) { renderer.shadowMap.enabled = !!opts.shadows; renderer.shadowMap.needsUpdate = true; }

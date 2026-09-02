@@ -26,7 +26,10 @@ void main() {
   vKind = aKind;
   vec4 mv = modelViewMatrix * vec4(position, 1.0);
   gl_Position = projectionMatrix * mv;
-  gl_PointSize = aSize * uPix / max(-mv.z, 0.6);
+  // aSize is a diameter in METRES; uPix converts metres at one metre of depth
+  // into pixels for the current viewport and field of view. The clamp stops a
+  // puff of mist next to the lens from becoming a full-screen white quad.
+  gl_PointSize = clamp(aSize * uPix / max(-mv.z, 0.5), 1.0, 320.0);
 }`;
 
 const pfrag = /* glsl */`
@@ -44,7 +47,7 @@ void main() {
            : vKind < 2.5 ? vec3(0.72, 0.67, 0.58)
                          : vec3(0.82, 0.93, 0.96);
   float a = soft * vLife;
-  if (vKind > 0.5 && vKind < 1.5) a *= 0.45;
+  if (vKind > 0.5 && vKind < 1.5) a *= 0.26;
   if (vKind > 2.5) a *= 0.55;
   gl_FragColor = vec4(col, a);
 }`;
@@ -120,7 +123,7 @@ export class Particles {
       this.spawn(
         x + Math.cos(a) * r * spread * 0.16, y + 0.05, z + Math.sin(a) * r * spread * 0.16,
         ux / l * sp + vx * 0.12, uy / l * sp * 1.35, uz / l * sp + vz * 0.12,
-        0.7 + Math.random() * 0.9, lerp(9, 22, Math.random()) * (0.6 + power * 0.6),
+        0.7 + Math.random() * 0.9, lerp(0.045, 0.135, Math.random()) * (0.6 + power * 0.6),
         Math.random() < 0.35 ? 1 : 0, 0.4,
       );
     }
@@ -132,7 +135,7 @@ export class Particles {
         x + Math.cos(a) * r, y, z + Math.sin(a) * r,
         Math.cos(a) * r * 0.7, (7 + Math.random() * 11) * lerp(0.55, 1.35, rip) * (0.5 + power),
         Math.sin(a) * r * 0.7,
-        0.85 + Math.random() * 0.75, lerp(7, 16, Math.random()), Math.random() < 0.5 ? 1 : 0, 0.55,
+        0.85 + Math.random() * 0.75, lerp(0.05, 0.16, Math.random()), Math.random() < 0.5 ? 1 : 0, 0.55,
       );
     }
     // Low mist hanging over the impact.
@@ -140,7 +143,7 @@ export class Particles {
       const a = Math.random() * Math.PI * 2, r = Math.random() * spread * 0.7;
       this.spawn(x + Math.cos(a) * r, y + Math.random() * 0.8, z + Math.sin(a) * r,
         Math.cos(a) * 1.4, 0.7 + Math.random(), Math.sin(a) * 1.4,
-        1.2 + Math.random() * 1.4, 26 + Math.random() * 30, 1, 1.7);
+        1.2 + Math.random() * 1.4, 0.55 + Math.random() * 1.05, 1, 1.7);
     }
   }
 
@@ -151,7 +154,7 @@ export class Particles {
       this.spawn(
         x + (Math.random() - 0.5) * 0.6, y + (Math.random() - 0.5) * 0.6, z + (Math.random() - 0.5) * 0.6,
         (Math.random() - 0.5) * 0.7, 0.9 + Math.random() * 1.6, (Math.random() - 0.5) * 0.7,
-        1.4 + Math.random() * 1.6, 5 + Math.random() * 9, 3, 2.4,
+        1.4 + Math.random() * 1.6, 0.028 + Math.random() * 0.055, 3, 2.4,
       );
     }
   }
@@ -165,7 +168,7 @@ export class Particles {
         (nx + (Math.random() - 0.5) * 1.4) * sp,
         (ny + (Math.random() - 0.5) * 1.4) * sp + 1.0,
         (nz + (Math.random() - 0.5) * 1.4) * sp,
-        0.5 + Math.random() * 0.8, 5 + Math.random() * 9, 2, 1.1);
+        0.5 + Math.random() * 0.8, 0.035 + Math.random() * 0.075, 2, 1.1);
     }
   }
 
@@ -176,7 +179,7 @@ export class Particles {
     for (let i = 0; i < n; i++) {
       this.spawn(x + (Math.random() - 0.5) * 1.1, y + (Math.random() - 0.5) * 1.4, z + (Math.random() - 0.5) * 1.1,
         (Math.random() - 0.5) * 1.2, speed * 0.22 + Math.random() * 2, (Math.random() - 0.5) * 1.2,
-        0.35 + Math.random() * 0.3, 8 + Math.random() * 10, 1, 1.4);
+        0.35 + Math.random() * 0.3, 0.06 + Math.random() * 0.09, 1, 1.4);
     }
   }
 
@@ -228,7 +231,10 @@ export class Particles {
     (this.geo.attributes.aKind as THREE.BufferAttribute).needsUpdate = true;
   }
 
-  setPixelScale(h: number) { this.mat.uniforms.uPix.value = h * 0.5; }
+  /** Pixels per metre at one metre of depth, for the current viewport and FOV. */
+  setPixelScale(pixelHeight: number, fovDeg: number) {
+    this.mat.uniforms.uPix.value = pixelHeight / (2 * Math.tan((fovDeg * Math.PI) / 360));
+  }
   clear() { this.n = 0; this.geo.setDrawRange(0, 0); }
 }
 
@@ -260,7 +266,7 @@ export class Trail {
       vertexShader: `attribute float aAlpha; varying float vA;
         void main(){ vA = aAlpha; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
       fragmentShader: `varying float vA;
-        void main(){ gl_FragColor = vec4(0.86, 0.94, 1.0, vA * 0.30); }`,
+        void main(){ gl_FragColor = vec4(0.88, 0.95, 1.0, vA * 0.46); }`,
       transparent: true, depthWrite: false, side: THREE.DoubleSide,
     });
     this.mesh = new THREE.Mesh(this.geo, mat);
@@ -284,7 +290,7 @@ export class Trail {
     if (this.hist.length > this.N) this.hist.length = this.N;
 
     const dir = new THREE.Vector3(), toCam = new THREE.Vector3(), side = new THREE.Vector3();
-    const width = clamp01((speed - 3) / 22) * 0.16 + 0.03;
+    const width = clamp01((speed - 3) / 22) * 0.20 + 0.04;
     for (let i = 0; i < this.N; i++) {
       const a = this.hist[Math.max(0, i - 1)], b = this.hist[Math.min(this.N - 1, i + 1)];
       dir.subVectors(b, a);
