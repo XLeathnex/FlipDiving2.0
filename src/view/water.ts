@@ -61,13 +61,21 @@ float n2(vec2 p){
   vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
   return mix(mix(h2(i), h2(i+vec2(1,0)), f.x), mix(h2(i+vec2(0,1)), h2(i+vec2(1,1)), f.x), f.y);
 }
-float fbm2(vec2 p){ float v=0.0,a=0.5; for(int i=0;i<4;i++){ v+=a*n2(p); p*=2.11; a*=0.5; } return v; }
+// Three octaves, not four. The fourth is invisible on a moving water surface
+// and this function is evaluated several times for every pixel of a full-screen
+// sea, so its cost multiplies fast.
+float fbm2(vec2 p){
+  float v = n2(p) * 0.5;
+  v += n2(p * 2.11) * 0.25;
+  v += n2(p * 4.37) * 0.125;
+  return v * 1.1428;
+}
 
 void main() {
   vec2 p = vWPos.xz;
   float t = uTime;
 
-  // --- Normal: analytic swell derivative plus two scales of ripple detail.
+  // --- Normal: analytic swell derivative plus one layer of ripple detail.
   float e = 0.35;
   float hx = waveHeight(p + vec2(e,0.0), t) - waveHeight(p - vec2(e,0.0), t);
   float hz = waveHeight(p + vec2(0.0,e), t) - waveHeight(p - vec2(0.0,e), t);
@@ -75,12 +83,14 @@ void main() {
 
   float dist = length(vWPos - uEye);
   float detailFade = 1.0 - smoothstep(24.0, 150.0, dist);
+
+  // One ripple field, sampled three times for its gradient, and then reused for
+  // every foam mask below rather than evaluating fresh noise for each.
   vec2 rp = p * 1.35 + vec2(t * 0.20, -t * 0.13);
-  float r1 = fbm2(rp), r2 = fbm2(p * 4.1 - vec2(t * 0.32, t * 0.21));
-  vec2 rg = vec2(fbm2(rp + vec2(0.12,0.0)) - r1, fbm2(rp + vec2(0.0,0.12)) - r1) / 0.12;
-  vec2 rg2 = vec2(fbm2(p*4.1 + vec2(0.06,0.0) - vec2(t*0.32,t*0.21)) - r2,
-                  fbm2(p*4.1 + vec2(0.0,0.06) - vec2(t*0.32,t*0.21)) - r2) / 0.06;
-  n = normalize(n + vec3(-rg.x * 0.16 - rg2.x * 0.035, 0.0, -rg.y * 0.16 - rg2.y * 0.035) * detailFade);
+  float r1 = fbm2(rp);
+  float rgx = fbm2(rp + vec2(0.12, 0.0)) - r1;
+  float rgy = fbm2(rp + vec2(0.0, 0.12)) - r1;
+  n = normalize(n + vec3(-rgx / 0.12 * 0.19, 0.0, -rgy / 0.12 * 0.19) * detailFade);
 
   vec3 V = normalize(uEye - vWPos);
   float fres = pow(clamp(1.0 - max(dot(n, V), 0.0), 0.0, 1.0), 4.4);
@@ -121,9 +131,9 @@ void main() {
 
   // --- Foam. Wave crests, a collar around every rock, and a widening ring
   //     where the diver went in.
-  float crest = smoothstep(0.055, 0.115, waveHeight(p, t)) * smoothstep(0.45, 0.85, fbm2(p * 2.2 + t * 0.25));
+  float crest = smoothstep(0.055, 0.115, waveHeight(p, t)) * smoothstep(0.42, 0.82, r1);
   float collar = 1.0 - smoothstep(0.0, 2.1, toRock);
-  collar *= 0.42 + 0.58 * fbm2(p * 2.6 + vec2(sin(t * 0.7) * 0.3, t * 0.16));
+  collar *= 0.42 + 0.58 * n2(p * 2.6 + vec2(sin(t * 0.7) * 0.3, t * 0.16));
   collar *= 0.55 + 0.45 * sin(t * 1.6 + toRock * 2.2);
 
   float ring = 0.0;
@@ -136,7 +146,7 @@ void main() {
   }
 
   float foam = clamp(crest * 0.45 + collar * 0.80 + ring, 0.0, 1.0);
-  foam *= 0.35 + 0.65 * fbm2(p * 6.5 + t * 0.4);
+  foam *= 0.35 + 0.65 * mix(r1, n2(p * 6.5 + t * 0.4), 0.6);
   col = mix(col, vec3(0.93, 0.965, 0.975), clamp(foam, 0.0, 0.92));
 
   // Distance haze so the sea meets the sky instead of ending at a hard line.

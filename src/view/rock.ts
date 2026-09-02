@@ -82,15 +82,15 @@ export function rockFromMesh(level: Level, m: Pick<RockMesh, 'positions' | 'norm
           float m2 = fbm3(vWPos * 1.9);
           float grain = fbm3(vWPos * 6.5);
 
-          vec3 pale  = vec3(0.545, 0.500, 0.418);
-          vec3 warm  = vec3(0.352, 0.285, 0.212);
-          vec3 grey  = vec3(0.300, 0.302, 0.288);
-          vec3 shade = vec3(0.128, 0.114, 0.100);
+          vec3 pale  = vec3(0.598, 0.562, 0.492);
+          vec3 warm  = vec3(0.392, 0.348, 0.284);
+          vec3 grey  = vec3(0.340, 0.340, 0.322);
+          vec3 shade = vec3(0.176, 0.164, 0.148);
 
           vec3 base = mix(warm, pale, smoothstep(0.28, 0.74, m0 * 0.6 + m1 * 0.4));
-          base = mix(base, grey, smoothstep(0.46, 0.86, m1) * 0.42);
-          base = mix(base, shade, smoothstep(0.58, 0.95, m2) * 0.50);
-          base *= 0.80 + 0.40 * grain;
+          base = mix(base, grey, smoothstep(0.42, 0.88, m1) * 0.38);
+          base = mix(base, shade, smoothstep(0.60, 0.98, m2) * 0.34);
+          base *= 0.88 + 0.24 * grain;
 
           // Bedding: recessed lines across the face, broken up so they never
           // read as contour lines drawn on the rock.
@@ -100,13 +100,13 @@ export function rockFromMesh(level: Level, m: Pick<RockMesh, 'positions' | 'norm
           base *= mix(0.80 + 0.16 * m2, 1.05, bedMask);
 
           // Sun-bleached tops, dirty undersides.
-          base = mix(base * 0.52, base * 1.14, pow(up, 0.65));
+          base = mix(base * 0.62, base * 1.12, pow(up, 0.65));
 
           // Vertical staining: rainwater runs down a sea cliff and leaves dark
           // streaks. Cheap, and unmistakably 'outdoor rock' rather than 'stone'.
           float streakN = fbm3(vec3(vWPos.x * 1.25, vWPos.y * 0.035, vWPos.z * 1.25));
           float streak = smoothstep(0.50, 0.90, streakN) * (1.0 - up) * smoothstep(1.0, 7.0, hgt);
-          base = mix(base, base * vec3(0.52, 0.50, 0.46), streak * 0.72);
+          base = mix(base, base * vec3(0.60, 0.585, 0.552), streak * 0.60);
 
           // Splash zone: dark and wet, with a band of algae right at the water.
           float wet   = 1.0 - smoothstep(0.3, 4.2, hgt);
@@ -118,8 +118,13 @@ export function rockFromMesh(level: Level, m: Pick<RockMesh, 'positions' | 'norm
           float veg = smoothstep(0.62, 0.90, up) * smoothstep(7.0, 13.0, hgt) * smoothstep(0.50, 0.80, m1);
           base = mix(base, vec3(0.212, 0.228, 0.128), veg * 0.66);
 
+          // Cavity darkening at the scale the mesh cannot resolve: grime and
+          // self-shadowing collect in the low spots of the fine detail.
+          float cav = smoothstep(0.56, 0.24, fbm3(vWPos * 2.6) * 0.6 + fbm3(vWPos * 0.62) * 0.4);
+          base *= 1.0 - cav * 0.30;
+
           diffuseColor.rgb *= base;
-          diffuseColor.rgb *= mix(0.06, 1.0, pow(vAo, 0.85));
+          diffuseColor.rgb *= mix(0.10, 1.0, pow(vAo, 0.80));
         }`)
       .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
         {

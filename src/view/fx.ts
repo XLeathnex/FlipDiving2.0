@@ -297,9 +297,11 @@ export class Trail {
     this.mesh.visible = on;
     if (!on) { this.active = false; return; }
     if (!this.active) { for (const v of this.hist) v.copy(p); this.active = true; }
-    this.hist.pop();
-    this.hist.unshift(this.hist[this.hist.length - 1].copy(p).clone());
-    if (this.hist.length > this.N) this.hist.length = this.N;
+    // Rotate the ring: take the oldest sample, move it to the head, reuse the
+    // vector. Writing through the array after popping corrupts the tail.
+    const oldest = this.hist.pop()!;
+    oldest.copy(p);
+    this.hist.unshift(oldest);
 
     const dir = new THREE.Vector3(), toCam = new THREE.Vector3(), side = new THREE.Vector3();
     const width = clamp01((speed - 3) / 22) * 0.20 + 0.04;

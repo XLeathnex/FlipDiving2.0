@@ -14,7 +14,15 @@ export const TUNE = {
   /** Seconds to open back out (slower: opening is a controlled unfurl). */
   openTime: 0.30,
   /** Player's pitch "scoop" authority, rad/s^2. Enough to fix a near miss, not to fly. */
-  scoopAccel: 2.0,
+  scoopAccel: 2.2,
+  /**
+   * How much rotation rate the scoop can add in one direction over a whole
+   * dive, rad/s. Without a cap, holding the key for a four-second fall adds
+   * more rotation than the takeoff did, and the game stops being about the
+   * angular momentum you committed to on the platform. A real diver swinging
+   * their arms has exactly this kind of bounded authority.
+   */
+  scoopBudget: 2.3,
   /** Aero weathervane strength: rad/s^2 at 20 m/s, fully extended, broadside. */
   alignAccel: 3.2,
   /** Rotational air damping when extended, 1/s at 20 m/s. Settles the weathervane. */
@@ -106,6 +114,8 @@ export class DiverBody {
   twist = 0;
   /** How much scoop input has been used this dive (style penalty). */
   scoopUsed = 0;
+  /** Signed rotation rate added by the scoop so far, against TUNE.scoopBudget. */
+  scoopDelta = 0;
   /** Set when the body first touches water. */
   submerged = 0;
   depth = 0;
@@ -132,7 +142,7 @@ export class DiverBody {
     this.orient.setAxisAngle(new V3(0, 1, 0), facing);
     this.mode = 'ground';
     this.airTime = 0; this.launchY = y; this.peakY = y;
-    this.somersault = 0; this.twist = 0; this.scoopUsed = 0;
+    this.somersault = 0; this.twist = 0; this.scoopUsed = 0; this.scoopDelta = 0;
     this.submerged = 0; this.depth = 0;
     this.timeSinceLaunch = 0;
     this.sinceSolid = 99;
@@ -155,7 +165,7 @@ export class DiverBody {
     this.airTime = 0;
     this.launchY = this.pos.y;
     this.peakY = this.pos.y;
-    this.somersault = 0; this.twist = 0; this.scoopUsed = 0;
+    this.somersault = 0; this.twist = 0; this.scoopUsed = 0; this.scoopDelta = 0;
     this.nearestSolid = 99;
     this.restingTime = 0;
     // Angular momentum about the diver's own somersault axis, converted to world.
@@ -217,10 +227,17 @@ export class DiverBody {
       // (a) Player scoop: specified as an angular *acceleration* so it feels the
       //     same whether tucked or extended, then converted to a torque.
       if (ctrl.pitch !== 0 && sub < 0.5) {
-        _t2.set(I.x * TUNE.scoopAccel * ctrl.pitch, 0, 0);
+        // Authority fades as the budget in this direction is spent, and comes
+        // back if you scoop the other way. So it stays a correction, never an
+        // engine, and it never cuts out abruptly mid-adjustment.
+        const spent = this.scoopDelta * Math.sign(ctrl.pitch);
+        const gain = spent <= 0 ? 1 : clamp01(1 - spent / TUNE.scoopBudget);
+        const alpha = TUNE.scoopAccel * ctrl.pitch * gain;
+        this.scoopDelta += alpha * dt;
+        _t2.set(I.x * alpha, 0, 0);
         this.orient.rotate(_t2, _t2);
         torque.add(_t2);
-        this.scoopUsed += Math.abs(ctrl.pitch) * dt;
+        this.scoopUsed += Math.abs(ctrl.pitch) * gain * dt;
       }
       // (b) Active axis control: a real diver fights unwanted twist/cartwheel.
       _t2.set(0, -TUNE.axisStab * I.y * this.omegaBody.y, -TUNE.axisStab * I.z * this.omegaBody.z);
