@@ -1,6 +1,7 @@
 import { clamp01 } from '../core/vec.ts';
 import type { HudState } from '../sim/game.ts';
 import type { DiveResult } from '../sim/scoring.ts';
+import type { Trick } from '../sim/tricks.ts';
 
 /**
  * DOM overlay.
@@ -74,8 +75,11 @@ const CSS = `
 #result .chip { font-size: 11px; padding: 4px 10px; border-radius: 99px; background: rgba(255,255,255,.13); letter-spacing: .04em; }
 #result .again { font-size: 11px; letter-spacing: .2em; text-transform: uppercase; color: var(--dim); margin-top: 20px; }
 
-/* Spot list. */
-#spots { position: absolute; right: 22px; top: 50%; transform: translateY(-50%); text-align: right; opacity: .0; transition: opacity .25s; }
+/* Spot list. Anchored to the bottom-right rather than vertical-centre so it
+   can never collide with the trick list above it, whatever either one's
+   current length is -- the two are visible at the same time throughout
+   'walk', and they used to land on top of each other. */
+#spots { position: absolute; right: 22px; bottom: 130px; text-align: right; opacity: .0; transition: opacity .25s; }
 #spots.on { opacity: 1; }
 #spots .s { font-size: 12.5px; padding: 3px 0; color: rgba(242,245,248,.42); font-variant-numeric: tabular-nums; }
 #spots .s.cur { color: var(--ink); font-weight: 600; }
@@ -83,14 +87,19 @@ const CSS = `
 #spots .s .pb { display: block; font-size: 10px; color: rgba(255,181,98,.72); letter-spacing: .04em; }
 #result .newbest { font-size: 11px; letter-spacing: .22em; text-transform: uppercase; color: var(--warm); margin-top: 10px; }
 
-/* Air trick: what Space does. Bottom-left so it sits under the thumb's eye. */
-#trick { position: absolute; right: 22px; top: 63%; text-align: right; transition: opacity .25s; }
-#trick .lbl { margin-bottom: 4px; }
-#trick .name { font-size: 21px; font-weight: 650; letter-spacing: -.01em; }
-#trick .name .keys { font-size: 10.5px; font-weight: 500; letter-spacing: .12em; color: rgba(242,245,248,.45); margin-right: 9px; }
-#trick .desc { font-size: 12px; color: var(--dim); max-width: 250px; line-height: 1.4; margin-top: 3px; margin-left: auto; }
-#trick .bombtag { display: inline-block; font-size: 9.5px; letter-spacing: .16em; text-transform: uppercase;
-  background: rgba(255,181,98,.20); color: var(--warm); padding: 2px 7px; border-radius: 99px; margin-left: 8px; vertical-align: 2px; }
+/* Air trick: a real selectable list, not just a readout of the current one.
+   Pinned below the score corner rather than vertical-centre -- see #spots. */
+#trick { position: absolute; right: 22px; top: 118px; text-align: right; transition: opacity .25s; }
+#trick .lbl { margin-bottom: 7px; }
+#trick .lbl .keys { font-size: 10.5px; font-weight: 500; letter-spacing: .1em; color: rgba(242,245,248,.42); margin-left: 6px; text-transform: none; }
+.tricklist { display: flex; flex-direction: column; gap: 1px; align-items: flex-end; }
+.tricklist .row { font-size: 13.5px; color: rgba(242,245,248,.34); padding: 2.5px 0; font-weight: 500; letter-spacing: -.005em;
+  transition: color .15s, transform .15s; }
+.tricklist .row .tag { font-size: 9px; letter-spacing: .1em; text-transform: uppercase; color: rgba(255,181,98,.55); margin-left: 7px; }
+.tricklist .row.cur { color: var(--ink); font-weight: 700; font-size: 16.5px; transform: translateX(-2px); }
+.tricklist .row.cur .tag { color: var(--warm); }
+.tricklist .sep { height: 6px; }
+#trick .desc { font-size: 12px; color: var(--dim); max-width: 250px; line-height: 1.4; margin-top: 8px; margin-left: auto; }
 
 /* Help. */
 #help { position: absolute; left: 50%; bottom: 20px; transform: translateX(-50%); display: flex; gap: 20px; font-size: 11.5px; color: var(--dim); transition: opacity .35s; }
@@ -98,6 +107,21 @@ const CSS = `
 #hint { position: absolute; left: 50%; bottom: 62px; transform: translateX(-50%); font-size: 13px; color: rgba(242,245,248,.78); transition: opacity .3s; text-align: center; max-width: 46vw; }
 #blurb { font-size: 12.5px; color: var(--dim); max-width: 250px; line-height: 1.42; margin-top: 10px; transition: opacity .3s; }
 .hide { opacity: 0 !important; }
+
+/* "You are standing somewhere you could dive from" prompt. */
+#edgePrompt { position: absolute; left: 50%; bottom: 100px; transform: translateX(-50%);
+  font-size: 14px; color: var(--ink); background: rgba(255,181,98,.16); border: 1px solid rgba(255,181,98,.35);
+  padding: 8px 18px; border-radius: 99px; opacity: 0; transition: opacity .2s; }
+#edgePrompt.on { opacity: 1; }
+#edgePrompt b { color: var(--warm); }
+
+/* Pointer-lock gate. Sits over everything until the player clicks in. */
+#lockPrompt { position: fixed; inset: 0; z-index: 30; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 10px; background: rgba(6,12,20,.38); backdrop-filter: blur(1.5px);
+  opacity: 0; pointer-events: none; transition: opacity .25s; }
+#lockPrompt.on { opacity: 1; }
+#lockPrompt .big { font-size: 22px; font-weight: 650; letter-spacing: -.01em; }
+#lockPrompt .small { font-size: 13px; color: var(--dim); }
 
 #load { position: fixed; inset: 0; z-index: 40; background: #0b1420; display: flex; flex-direction: column;
   align-items: center; justify-content: center; color: #f2f5f8; font-family: ui-sans-serif, system-ui, sans-serif; transition: opacity .5s; }
@@ -163,27 +187,51 @@ export class Hud {
       </div>
       <div id="spots"></div>
       <div id="trick">
-        <div class="lbl">Air trick</div>
-        <div class="name"><span class="keys">Z / X</span><span id="trickName">Tuck</span><span class="bombtag" id="trickTag" style="display:none">Splash</span></div>
+        <div class="lbl">Air Trick <span class="keys">Z / X</span></div>
+        <div class="tricklist" id="trickList"></div>
         <div class="desc" id="trickDesc"></div>
       </div>
       <div id="hint"></div>
       <div id="help">
-        <span><b>Hold Space</b> charge</span>
-        <span><b>A / D</b> rotation</span>
-        <span><b>Space</b> tuck</span>
-        <span><b>W</b> straighten</span>
+        <span><b>WASD</b> move</span>
+        <span><b>Mouse</b> look</span>
+        <span><b>Shift</b> run</span>
+        <span><b>Space</b> jump / commit</span>
+        <span><b>W / S</b> lean</span>
         <span><b>Z / X</b> trick</span>
         <span><b>R</b> retry</span>
-        <span><b>Q / E</b> spot</span>
-      </div>`;
+        <span><b>G</b> map</span>
+      </div>
+      <div id="edgePrompt">Hold <b>Space</b> to dive</div>
+      <div id="lockPrompt"><div class="big">Click to play</div><div class="small">Mouse looks around · WASD walks · Space jumps</div></div>`;
     parent.appendChild(this.el);
     for (const id of ['spotName', 'spotH', 'score', 'best', 'ladder', 'dmark', 'altTxt', 'ttwTxt',
       'rot', 'rotN', 'rotD', 'takeoff', 'powFill', 'spinFill', 'spinLbl', 'result', 'grade', 'trick',
       'pts', 'chips', 'newbest', 'spots', 'help', 'hint', 'blurb', 'm1', 'm2', 'm3',
-      'trick', 'trickLine', 'trickName', 'trickDesc', 'trickTag']) {
+      'trickLine', 'trickList', 'trickDesc', 'edgePrompt', 'lockPrompt']) {
       this.q[id] = document.getElementById(id)!;
     }
+  }
+
+  private trickRows: HTMLElement[] = [];
+
+  /** Built once: the roster does not change at runtime. */
+  setTrickList(tricks: Trick[], curIndex: number) {
+    const html: string[] = [];
+    let lastIntent = '';
+    for (let i = 0; i < tricks.length; i++) {
+      const t = tricks[i];
+      if (t.intent !== lastIntent && lastIntent !== '') html.push('<div class="sep"></div>');
+      lastIntent = t.intent;
+      html.push(`<div class="row" data-i="${i}">${t.name}${t.intent === 'bomb' ? '<span class="tag">Splash</span>' : ''}</div>`);
+    }
+    this.q.trickList.innerHTML = html.join('');
+    this.trickRows = Array.from(this.q.trickList.querySelectorAll('.row'));
+    this.setTrickCurrent(curIndex);
+  }
+
+  setTrickCurrent(i: number) {
+    for (const r of this.trickRows) r.classList.toggle('cur', r.dataset.i === String(i));
   }
 
   setSpots(names: { id: string; name: string; height: number }[], cur: number, bests: Record<string, number> = {}) {
@@ -196,10 +244,12 @@ export class Hud {
 
   showSpots(on: boolean) { this.q.spots.classList.toggle('on', on); }
 
+  setLocked(locked: boolean) {
+    this.q.lockPrompt.classList.toggle('on', !locked);
+  }
+
   update(h: HudState, result: DiveResult | null, sinceResult: number, blurb: string, best: number, lastScore: number) {
-    this.q.trickName.textContent = h.trick.name;
     this.q.trickDesc.textContent = h.trick.blurb;
-    (this.q.trickTag as HTMLElement).style.display = h.trick.intent === 'bomb' ? '' : 'none';
 
     this.q.spotName.textContent = h.spotName;
     this.q.spotH.textContent = `${h.spotHeight.toFixed(0)} m`;
@@ -212,7 +262,7 @@ export class Hud {
     this.q.takeoff.classList.toggle('on', h.phase === 'charge');
     if (h.phase === 'charge') {
       (this.q.powFill as HTMLElement).style.width = `${h.charge * 100}%`;
-      const s = h.spinCharge;
+      const s = h.lean;
       const f = this.q.spinFill as HTMLElement;
       f.style.left = s >= 0 ? '50%' : `${50 + s * 50}%`;
       f.style.width = `${Math.abs(s) * 50}%`;
@@ -267,15 +317,20 @@ export class Hud {
     }
 
     this.q.trick.classList.toggle('hide', h.phase === 'result');
-    this.q.blurb.textContent = h.phase === 'ready' ? blurb : '';
-    this.q.blurb.classList.toggle('hide', h.phase !== 'ready');
+    this.q.blurb.textContent = h.phase === 'walk' && !h.edgeDrop ? blurb : '';
+    this.q.blurb.classList.toggle('hide', !(h.phase === 'walk' && !h.edgeDrop));
+
+    // "You could dive here" -- shown only when standing still at a real edge,
+    // which is exactly the condition that makes holding Space start a charge.
+    this.q.edgePrompt.classList.toggle('on', h.phase === 'walk' && h.edgeDrop > 3);
 
     // Contextual coaching, only for the first few attempts.
     let hint = '';
-    if (this.dives < 4) {
-      if (h.phase === 'ready') hint = 'Hold Space to load the jump. Hold A or D at the same time to set your rotation.';
-      else if (h.phase === 'charge') hint = 'Release to launch.';
-      else if (h.phase === 'air' && h.toWater > 4) hint = 'Space tucks and spins you up. W straightens you out for the entry.';
+    if (h.phase === 'walk' && h.edgeDrop > 3 && this.dives < 6) {
+      hint = 'Hold Space to load a jump here. W/S while charging leans you into a front or back rotation.';
+    } else if (this.dives < 6) {
+      if (h.phase === 'charge') hint = 'Look where you want to land. Release Space to launch.';
+      else if (h.phase === 'air' && h.toWater > 4) hint = 'Space commits to your trick. W straightens you out for the entry.';
     }
     this.q.hint.textContent = hint;
     this.q.hint.classList.toggle('hide', !hint);

@@ -13,11 +13,31 @@ export function buildProps(level: Level): THREE.Group {
   const wood = new THREE.MeshStandardMaterial({ color: 0x8a7358, roughness: 0.88, metalness: 0.0 });
   const woodDark = new THREE.MeshStandardMaterial({ color: 0x5e4c3a, roughness: 0.9, metalness: 0.0 });
   const steel = new THREE.MeshStandardMaterial({ color: 0x6b6f74, roughness: 0.52, metalness: 0.75 });
+  const stone = new THREE.MeshStandardMaterial({ color: 0x9a8f7d, roughness: 0.85, metalness: 0.0 });
+  const stoneDark = new THREE.MeshStandardMaterial({ color: 0x847a6a, roughness: 0.88, metalness: 0.0 });
 
   // Collision boxes, drawn as planked decks so they read as built objects.
   for (const b of level.props) {
-    const isDeck = b.hy < 0.4 && b.hx > 0.5;
-    if (isDeck) {
+    const isStone = b.mat === 'stone';
+    const isDeck = !isStone && b.hy < 0.4 && b.hx > 0.5;
+    if (isStone) {
+      // Square masonry, coursed: a stack of slightly recessed courses reads as
+      // built stone far more than one flat-shaded box ever will.
+      const g = new THREE.Group();
+      const courseH = 1.1;
+      const courses = Math.max(1, Math.round((b.hy * 2) / courseH));
+      for (let i = 0; i < courses; i++) {
+        const h = (b.hy * 2) / courses;
+        const inset = i % 2 === 0 ? 1.0 : 0.975;
+        const m = new THREE.Mesh(new THREE.BoxGeometry(b.hx * 2 * inset, h * 0.94, b.hz * 2 * inset), i % 2 ? stone : stoneDark);
+        m.position.set(0, -b.hy + h * (i + 0.5), 0);
+        m.castShadow = true; m.receiveShadow = true;
+        g.add(m);
+      }
+      g.position.set(b.x, b.y, b.z);
+      g.rotation.y = b.yaw;
+      grp.add(g);
+    } else if (isDeck) {
       const planks = Math.max(2, Math.round(b.hz * 2 / 0.28));
       for (let i = 0; i < planks; i++) {
         const w = (b.hz * 2) / planks;
@@ -64,6 +84,25 @@ export function buildProps(level: Level): THREE.Group {
   brace(12.0, 33.8, -19.6, 12.0, 34.9, -19.6, 0.045, steel);
   brace(12.0, 33.8, -17.0, 12.0, 34.9, -17.0, 0.045, steel);
   brace(12.0, 34.85, -19.6, 12.0, 34.85, -17.0, 0.04, steel);
+
+  // The Watchtower: a hundred-metre span like this cannot be braced from
+  // below the way a short jetty can (there is nothing underneath most of it
+  // but open air), so instead it hangs the way a real cable-stayed bridge
+  // does -- from a spire above, not a leg below.
+  const spireTop = new THREE.Vector3(-38, 111, 1);
+  brace(-38, 102.9, 1, spireTop.x, spireTop.y, spireTop.z, 0.5, steel);
+  const gangwaySegs: [number, number][] = [[-32.0, 4.0], [-23.5, 5.0], [-14.5, 5.5], [-7.5, 4.5]];
+  for (const [sx, half] of gangwaySegs) {
+    for (const sz of [-0.6, 2.6]) {
+      brace(spireTop.x, spireTop.y, spireTop.z, sx - half * 0.7, 102.5, sz, 0.045, steel);
+      brace(spireTop.x, spireTop.y, spireTop.z, sx + half * 0.7, 102.5, sz, 0.045, steel);
+    }
+  }
+  // Handrail at the jump-off end, the one place on the walk you would
+  // actually notice its absence.
+  brace(-3.2, 102.6, -1.4, -3.2, 103.7, -1.4, 0.045, steel);
+  brace(-3.2, 102.6, 3.4, -3.2, 103.7, 3.4, 0.045, steel);
+  brace(-3.2, 103.65, -1.4, -3.2, 103.65, 3.4, 0.04, steel);
 
   return grp;
 }

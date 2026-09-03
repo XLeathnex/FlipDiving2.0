@@ -28,11 +28,13 @@ export interface Spot {
   blurb: string;
 }
 
-interface Obb {
+export interface Obb {
   x: number; y: number; z: number;
   hx: number; hy: number; hz: number;
   yaw: number;
   hard: number;
+  /** Rendering hint. Defaults to a size-based guess (see props.ts) if unset. */
+  mat?: 'wood' | 'stone';
 }
 
 const _g = { x: 0, y: 1, z: 0 };
@@ -146,6 +148,14 @@ export class Level implements CollisionWorld {
       sphere(19.0, -1.6, 6.0, 3.4, 1.8),
     );
 
+    // --- The Watchtower's stone plinth: the last few courses of masonry
+    // blend into the summit rock, the way an old coastal tower's base always
+    // does after a century of weather. The straight shaft above is a prop.
+    R.add(
+      box(-38, 52, 1, 3.4, 2.0, 3.4, 0.5, 0.0, 1.0),
+    );
+
+
     // --- Far headland closing the bay to the north, for composition and depth.
     R.add(
       box(-30, 5, -86, 30, 13, 16, 3.0, 0.06, 3.0),
@@ -172,6 +182,33 @@ export class Level implements CollisionWorld {
       { x: 15.4, y: 33.6, z: -18.3, hx: 4.2, hy: 0.22, hz: 1.5, yaw: 0.0, hard: 0.6 },
       { x: 12.2, y: 34.6, z: -19.5, hx: 0.16, hy: 0.85, hz: 0.16, yaw: 0, hard: 0.5 },
       { x: 12.2, y: 34.6, z: -17.1, hx: 0.16, hy: 0.85, hz: 0.16, yaw: 0, hard: 0.5 },
+    );
+
+    // --- The Watchtower: a square stone lookout tower built on the headland's
+    // highest point, tapering as it rises the way real masonry towers do to
+    // keep their weight down.
+    this.props.push(
+      { x: -38, y: 61.5, z: 1, hx: 2.9, hy: 8.0, hz: 2.9, yaw: 0.0, hard: 0.7, mat: 'stone' },   // lower shaft
+      { x: -38, y: 77.5, z: 1, hx: 2.45, hy: 8.0, hz: 2.45, yaw: 0.05, hard: 0.7, mat: 'stone' }, // mid shaft
+      { x: -38, y: 92.5, z: 1, hx: 2.0, hy: 7.0, hz: 2.0, yaw: 0.09, hard: 0.7, mat: 'stone' },   // upper shaft
+      { x: -38, y: 101.2, z: 1, hx: 2.55, hy: 1.7, hz: 2.55, yaw: 0.09, hard: 0.7, mat: 'stone' }, // lookout room
+    );
+    // A hundred-metre drop straight off the tower's own footprint would clip
+    // the headland's upper face at exactly the charge levels that push you
+    // just far enough out to reach it and no further -- the same cliff every
+    // other spot on the headland already launches clear of, because they all
+    // stand nearer its edge than the summit ever gets you. So a long wooden
+    // gangway walks the jump-off point out past the whole silhouette instead,
+    // to the same longitude the Shelf and Gull Ledge already prove safe.
+    // Collision is just the walking surface: four level deck segments. The
+    // bracing back to the tower is decoration (see props.ts) kept clear of
+    // the launch path on purpose, the same way a real gangway's underside
+    // strutwork is nowhere near where you'd actually take off from.
+    this.props.push(
+      { x: -32.0, y: 102.4, z: 1, hx: 4.0, hy: 0.20, hz: 1.3, yaw: 0.0, hard: 0.55 },
+      { x: -23.5, y: 102.4, z: 1, hx: 5.0, hy: 0.20, hz: 1.3, yaw: 0.0, hard: 0.55 },
+      { x: -14.5, y: 102.4, z: 1, hx: 5.5, hy: 0.20, hz: 1.3, yaw: 0.0, hard: 0.55 },
+      { x: -7.5, y: 102.4, z: 1, hx: 4.5, hy: 0.20, hz: 1.6, yaw: 0.0, hard: 0.6 },  // jump-off deck
     );
   }
 
@@ -203,6 +240,7 @@ export class Level implements CollisionWorld {
       { id: 'arch', name: 'The Arch', pos: new V3(12.0, 24.32, 17.4), yaw: 0.04, height: 24.3, blurb: 'The far leg is right under you. Jump lazy and you find it.' },
       { id: 'plank', name: 'The Plank', pos: new V3(-3.2, 27.92, -0.4), yaw: 0.0, height: 27.9, blurb: 'Weathered timber, deep water, nothing in the way.' },
       { id: 'mast', name: 'The Mast', pos: new V3(18.4, 33.82, -18.3), yaw: -0.05, height: 33.8, blurb: 'Four seconds of falling. Do something with them.' },
+      { id: 'tower', name: 'The Watchtower', pos: new V3(-3.5, 102.62, 1.0), yaw: 0.0, height: 102.6, blurb: 'A hundred metres up. You will have time to think about this on the way down.' },
     ];
     // Resolve each spot onto the surface that is actually there.
     for (const s of this.spots) {
@@ -306,6 +344,35 @@ export class Level implements CollisionWorld {
       }
     }
     return hit;
+  }
+
+  /** Unique id, so per-spot bests can be kept per map. */
+  readonly id: string = 'calanera';
+
+  /** Nearest named landmark to a point, within `range` metres. */
+  nearestSpot(x: number, y: number, z: number, range: number): Spot | null {
+    let best: Spot | null = null;
+    let bestD = range * range;
+    for (const s of this.spots) {
+      const dx = s.pos.x - x, dy = (s.pos.y - y) * 1.6, dz = s.pos.z - z;
+      const d = dx * dx + dy * dy + dz * dz;
+      if (d < bestD) { bestD = d; best = s; }
+    }
+    return best;
+  }
+
+  /** Is this point inside a man-made prop? Used by the walker's edge probe. */
+  propAt(x: number, y: number, z: number): boolean {
+    for (let i = 0; i < this.props.length; i++) {
+      const b = this.props[i];
+      let dx = x - b.x, dz = z - b.z;
+      if (b.yaw !== 0) {
+        const c = Math.cos(-b.yaw), s = Math.sin(-b.yaw);
+        const nx = dx * c - dz * s; dz = dx * s + dz * c; dx = nx;
+      }
+      if (Math.abs(dx) <= b.hx && Math.abs(y - b.y) <= b.hy && Math.abs(dz) <= b.hz) return true;
+    }
+    return false;
   }
 
   /** Approximate distance to the nearest solid surface. Used for near-miss scoring. */

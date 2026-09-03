@@ -26,6 +26,7 @@ import type { Trick } from '../sim/tricks.ts';
 interface Joint { a: number; v: number; target: number }
 const j = (): Joint => ({ a: 0, v: 0, target: 0 });
 const _axis = new V3();
+const _upAxis = new THREE.Vector3(0, 1, 0);
 
 interface PoseSet {
   hip: number; knee: number; ankle: number;
@@ -47,9 +48,13 @@ const POSES: Record<string, PoseSet> = {
   // --- one per trick ---
   tuck:    { hip: 2.30, knee: 2.55, ankle: -0.25, shoulder: 1.15, elbow: 2.10, armOut: 0.30, legOut: 0.18, spine: 0.38, head: 0.40 },
   pike:    { hip: 1.95, knee: 0.06, ankle: -0.90, shoulder: 1.78, elbow: 0.18, armOut: 0.14, legOut: 0.05, spine: 0.22, head: 0.30 },
+  pencil:  { hip: 0.00, knee: 0.00, ankle: -1.15, shoulder: 3.05, elbow: 0.02, armOut: 0.02, legOut: 0.00, spine: -0.02, head: 0.06 },
   star:    { hip: 0.34, knee: 0.05, ankle: -0.45, shoulder: 1.88, elbow: 0.08, armOut: 1.18, legOut: 0.52, spine: 0.02, head: 0.06 },
+  twister: { hip: 0.02, knee: 0.02, ankle: -0.70, shoulder: 0.30, elbow: 1.35, armOut: 0.02, legOut: 0.00, spine: 0.02, head: 0.02 },
   bomb:    { hip: 2.38, knee: 2.72, ankle: -0.15, shoulder: 1.02, elbow: 2.45, armOut: 0.55, legOut: 0.44, spine: 0.44, head: 0.46 },
   manu:    { hip: 2.10, knee: 0.45, ankle: -0.55, shoulder: 1.55, elbow: 0.58, armOut: 0.24, legOut: 0.09, spine: -0.30, head: 0.24 },
+  candle:  { hip: 0.10, knee: 0.55, ankle: 0.10, shoulder: 0.35, elbow: 1.55, armOut: 0.04, legOut: 0.02, spine: 0.05, head: 0.00 },
+  watermelon: { hip: 0.15, knee: 0.08, ankle: -0.30, shoulder: 1.95, elbow: 0.05, armOut: 1.35, legOut: 0.85, spine: 0.05, head: 0.05 },
 };
 
 const KEYS = ['hip', 'knee', 'ankle', 'shoulder', 'elbow', 'armOut', 'legOut', 'spine', 'head'] as const;
@@ -59,10 +64,11 @@ function blend(a: PoseSet, b: PoseSet, t: number, out: PoseSet): PoseSet {
   return out;
 }
 
-const SKIN = 0xc98d63;
-const VEST = 0x123642;
-const TRUNKS = 0xe2571c;
-const HAIR = 0x1b1a19;
+const SKIN = 0xd39a70;
+const TRUNKS = 0xe2381c;
+const TRUNKS_TRIM = 0xf4ede2;
+const HAIR = 0x2b1c12;
+const EYE = 0x1a1410;
 
 export class Character {
   root = new THREE.Group();
@@ -83,12 +89,15 @@ export class Character {
   private asym = 0;
   private t = 0;
   private leadSmooth = 1;
+  private walkPhase = 0;
+  private walkHipB = 0;
 
   constructor() {
-    const skin = new THREE.MeshStandardMaterial({ color: SKIN, roughness: 0.58 });
-    const vest = new THREE.MeshStandardMaterial({ color: VEST, roughness: 0.52 });
-    const trunks = new THREE.MeshStandardMaterial({ color: TRUNKS, roughness: 0.56 });
-    const dark = new THREE.MeshStandardMaterial({ color: HAIR, roughness: 0.62 });
+    const skin = new THREE.MeshStandardMaterial({ color: SKIN, roughness: 0.55 });
+    const trunks = new THREE.MeshStandardMaterial({ color: TRUNKS, roughness: 0.58 });
+    const trim = new THREE.MeshStandardMaterial({ color: TRUNKS_TRIM, roughness: 0.7 });
+    const dark = new THREE.MeshStandardMaterial({ color: HAIR, roughness: 0.5 });
+    const eye = new THREE.MeshStandardMaterial({ color: EYE, roughness: 0.35 });
 
     /** Capsule of the given length, hanging downward from y = 0. */
     const limb = (parent: THREE.Object3D, len: number, r: number, mat: THREE.Material) => {
@@ -109,20 +118,25 @@ export class Character {
 
     this.root.add(this.pelvis);
 
-    const hips = new THREE.Mesh(new THREE.CapsuleGeometry(0.135, 0.11, 4, 12), trunks);
+    const hips = new THREE.Mesh(new THREE.CapsuleGeometry(0.140, 0.11, 4, 12), trunks);
     hips.position.y = 0.02;
     hips.scale.set(1.0, 1.0, 0.86);
     hips.castShadow = true;
     this.pelvis.add(hips);
+    const waistband = new THREE.Mesh(new THREE.TorusGeometry(0.142, 0.016, 6, 16), trim);
+    waistband.position.y = 0.10;
+    waistband.rotation.x = Math.PI / 2;
+    waistband.scale.set(1.0, 1.0, 0.86);
+    this.pelvis.add(waistband);
 
     this.chest.position.y = 0.13;
     this.pelvis.add(this.chest);
-    const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.148, 0.30, 4, 12), vest);
+    const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.158, 0.30, 4, 12), skin);
     torso.position.y = 0.20;
-    torso.scale.set(1.06, 1, 0.82);
+    torso.scale.set(1.10, 1, 0.86);
     torso.castShadow = true; torso.receiveShadow = true;
     this.chest.add(torso);
-    const shoulders = new THREE.Mesh(new THREE.CapsuleGeometry(0.118, 0.17, 4, 10), vest);
+    const shoulders = new THREE.Mesh(new THREE.CapsuleGeometry(0.124, 0.19, 4, 10), skin);
     shoulders.position.y = 0.385;
     shoulders.rotation.z = Math.PI / 2;
     shoulders.scale.set(1, 1, 0.85);
@@ -138,6 +152,14 @@ export class Character {
     hair.position.set(0, 0.152, -0.012);
     hair.scale.set(0.92, 0.86, 1.0);
     this.head.add(hair);
+
+    // A simple face reads far better up close than a blank ball, for the cost
+    // of two spheres. Positioned on the skull's front (+Z) surface.
+    for (const side of [-1, 1]) {
+      const eyeMesh = new THREE.Mesh(new THREE.SphereGeometry(0.014, 8, 6), eye);
+      eyeMesh.position.set(side * 0.040, 0.148, 0.096);
+      this.head.add(eyeMesh);
+    }
 
     for (const side of [-1, 1]) {
       // --- leg ---
@@ -169,8 +191,8 @@ export class Character {
       const ua = new THREE.Group();
       ua.position.set(side * 0.158, 0.375, 0);
       this.chest.add(ua);
-      knuckle(ua, 0.066, vest);
-      limb(ua, 0.22, 0.060, vest);
+      knuckle(ua, 0.070, skin);
+      limb(ua, 0.22, 0.064, skin);
       this.upperArms.push(ua);
 
       const fa = new THREE.Group();
@@ -213,8 +235,46 @@ export class Character {
     }
     this.leadSmooth += (lead - this.leadSmooth) * Math.min(1, dt * 3.2);
     this.setPose(phase, body.shape, charge, this.leadSmooth, body.trick);
+    this.applySprings(dt, phase === 'crashed' ? 1 : 0);
+  }
 
-    const wantLimp = phase === 'crashed' ? 1 : 0;
+  /**
+   * On-foot pose: standing, walking or crouching to load a jump. No DiverBody
+   * exists yet at this point in the state machine -- the rigid body only takes
+   * over at the instant of launch -- so this drives the same rig from the
+   * walker instead, with a simple procedural gait cycle standing in for real
+   * root motion. It does not need to be more than legible at the distances a
+   * third-person camera actually shows a pair of legs.
+   */
+  updateOnFoot(dt: number, gait: number, charging: boolean, charge: number) {
+    this.t += dt;
+    this.walkPhase += dt * (2.4 + gait * 4.2);
+
+    if (charging) {
+      blend(POSES.stand, POSES.crouch, clamp01(charge), this.tgt);
+    } else {
+      Object.assign(this.tgt, POSES.stand);
+      const swing = Math.sin(this.walkPhase) * gait;
+      const swingB = Math.sin(this.walkPhase + Math.PI) * gait;
+      this.tgt.hip += swing * 0.62;
+      this.tgt.shoulder -= swing * 0.42;
+      this.walkHipB = swingB;
+    }
+    this.applySprings(dt, 0);
+
+    // The walk cycle needs the two legs and two arms out of phase with each
+    // other, which the shared symmetric spring loop does not know how to do on
+    // its own -- so nudge the trailing leg/arm here, after the springs settle.
+    if (!charging && gait > 0.02) {
+      const swingB = this.walkHipB * 0.62;
+      this.thighs[1].rotation.x = -(this.cur.hip - Math.sin(this.walkPhase) * 0.62 + swingB);
+      this.shins[1].rotation.x = Math.max(0, -swingB) * 1.3;
+      this.upperArms[0].rotation.x = -(this.cur.shoulder + swingB * 0.68);
+      this.upperArms[1].rotation.x = -(this.cur.shoulder - swingB * 0.68);
+    }
+  }
+
+  private applySprings(dt: number, wantLimp: number) {
     this.limp += (wantLimp - this.limp) * Math.min(1, dt * (wantLimp ? 9 : 3));
 
     // Spring the joints toward the target. Going limp mostly means turning the
@@ -251,5 +311,14 @@ export class Character {
   syncTransform(body: DiverBody) {
     this.root.position.set(body.pos.x, body.pos.y, body.pos.z);
     this.root.quaternion.set(body.orient.x, body.orient.y, body.orient.z, body.orient.w);
+  }
+
+  /** Position and face the rig from the walk controller instead of the body. */
+  syncFromWalker(x: number, y: number, z: number, yaw: number) {
+    this.root.position.set(x, y, z);
+    // Walker yaw: 0 = +X. The character model's own forward is +Z, so it needs
+    // the quarter-turn correction the dive path gets for free from the body's
+    // own orientation.
+    this.root.quaternion.setFromAxisAngle(_upAxis, -yaw + Math.PI / 2);
   }
 }

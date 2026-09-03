@@ -12,6 +12,7 @@ import { Trail } from './view/fx.ts';
 import { Spray } from './view/spray.ts';
 import { SplashFX } from './view/splash.ts';
 import { Hud, showLoader } from './view/hud.ts';
+import { TRICKS } from './sim/tricks.ts';
 import { Post } from './view/post.ts';
 import { Audio } from './audio/audio.ts';
 
@@ -123,8 +124,10 @@ mesher.onmessage = (e) => {
   hud.mount(document.body);
   loadBests();
   hud.setSpots(game.level.spots, game.spotIndex, game.bestBySpot);
+  hud.setTrickList(TRICKS, game.trickIndex);
   input.attach(canvas);
   input.onFirstInput = () => { audio.start(); audio.resume(); };
+  director.orbitYaw = Math.PI + game.walker.yaw;
   director.snap(game, innerWidth / innerHeight);
   resize();
 
@@ -171,27 +174,38 @@ function frame() {
   const intent = input.poll();
   if (intent.toggleMute) audio.setMuted(!audio.muted);
   if (intent.toggleHelp) hud.toggleHelp();
-  if (intent.spotIndex >= 0) { game.selectSpot(intent.spotIndex, intent.jump); audio.ui(); }
-  if (intent.trickIndex >= 0) { game.selectTrick(intent.trickIndex); audio.ui(); }
+  if (intent.spotIndex >= 0) { game.teleport(intent.spotIndex, intent.jump); audio.ui(); }
+  if (intent.trickIndex >= 0) { game.selectTrick(intent.trickIndex); hud.setTrickCurrent(game.trickIndex); audio.ui(); }
+  hud.setLocked(intent.pointerLocked);
+
+  // Mouse-look always feeds the camera. It only steers the character while on
+  // foot (walking freely, or aiming a dive with the camera during charge) --
+  // the dive itself stays fully automatic, since a camera the player is also
+  // steering is a camera fighting the player for control at the one moment
+  // control matters most.
+  director.applyLook(intent.lookDX, intent.lookDY);
 
   // Hit-stop: a very short freeze on hard impacts. Long enough to feel the
   // collision, short enough that it never eats an input.
   const scale = director.consumeTimeScale(dt);
 
   if (!posePaused) game.update(dt * scale, {
+    mx: intent.mx, mz: intent.mz, run: intent.run,
     jump: intent.jump, jumpEdge: intent.jumpEdge, stretch: intent.stretch, rot: intent.rot,
     restart: intent.restart, spotDelta: intent.spotDelta, trickDelta: intent.trickDelta,
+    camYaw: director.orbitYaw,
   });
   if (intent.spotDelta) { hud.setSpots(game.level.spots, game.spotIndex, game.bestBySpot); audio.ui(); }
 
   const b = game.body;
+  const w = game.walker;
   const lvl = game.level;
 
   // --- Consume simulation events into presentation.
   for (const ev of game.events) {
     switch (ev.t) {
       case 'spawn':
-        trail.reset(_hp.set(b.pos.x, b.pos.y, b.pos.z));
+        trail.reset(_hp.set(w.pos.x, w.pos.y, w.pos.z));
         spray.clear();
         splash.reset();
         hud.setSpots(lvl.spots, game.spotIndex, game.bestBySpot);
@@ -206,7 +220,14 @@ function frame() {
         hud.noteDive();
         break;
       case 'trick':
+        hud.setTrickCurrent(game.trickIndex);
         audio.ui();
+        break;
+      case 'footstep':
+        audio.footstep();
+        break;
+      case 'land':
+        audio.land(ev.speed);
         break;
       case 'crash':
         director.kick(0.95);
@@ -237,25 +258,36 @@ function frame() {
   }
   game.events.length = 0;
 
-  // --- Presentation update.
-  const phase = b.mode === 'crashed' ? 'crashed'
-    : game.phase === 'charge' ? 'charge'
-    : game.phase === 'ready' ? 'ground' : 'air';
-  character.update(dt, b, phase, game.charge);
-  character.syncTransform(b);
+  // --- Presentation update. On foot the rig is driven by the walker (there is
+  // no rigid body yet -- it only exists from the instant of launch), so the two
+  // paths sync the same character from different sources.
+  if (game.onFoot) {
+    character.updateOnFoot(dt, w.gait, game.phase === 'charge', game.charge);
+    character.syncFromWalker(w.pos.x, w.pos.y, w.pos.z, w.yaw);
+  } else {
+    const phase = b.mode === 'crashed' ? 'crashed' : game.phase === 'charge' ? 'charge' : 'air';
+    character.update(dt, b, phase, game.charge);
+    character.syncTransform(b);
+  }
 
   director.update(dt, game, innerWidth / innerHeight);
   const cam = director.cam;
 
-  const waterY = lvl.waterHeight(b.pos.x, b.pos.z);
+  // On foot the "body" is a stale leftover from the last dive, so anything
+  // reading position, velocity or submersion has to pick its source from
+  // whichever half of the simulation is actually live right now.
+  const refX = game.onFoot ? w.pos.x : b.pos.x;
+  const refZ = game.onFoot ? w.pos.z : b.pos.z;
+  const waterY = lvl.waterHeight(refX, refZ);
   water.update(game.time, cam.position);
   water.tickSplash(dt);
 
-  const speed = b.vel.len();
+  const speed = game.onFoot ? Math.hypot(w.vel.x, w.vel.y, w.vel.z) : b.vel.len();
+  const submerged = game.onFoot ? 0 : b.submerged;
   character.headWorld(_hp);
   trail.update(_hp, cam.position, speed, game.phase === 'air' && speed > 5);
 
-  if (b.submerged > 0.3 && speed > 1.5) {
+  if (submerged > 0.3 && speed > 1.5) {
     spray.bubbles(b.pos.x, b.pos.y, b.pos.z, speed, dt);
   }
   spray.setStretch(innerHeight * renderer.getPixelRatio(), cam.fov);
@@ -263,7 +295,7 @@ function frame() {
   spray.update(dt, waterY);
 
   // Wind rises with airspeed; the last moment before the water tightens it.
-  audio.setAirspeed(speed, b.submerged);
+  audio.setAirspeed(speed, submerged);
   const h = game.hud();
   if (game.phase === 'air') {
     audio.approach(h.timeToWater);
@@ -275,7 +307,7 @@ function frame() {
   if (rs) rs.uniforms.uTime.value = game.time;
 
   hud.update(h, game.result, game.sinceResult, game.spot.blurb, game.best, game.lastScore);
-  hud.showSpots(game.phase === 'ready' || game.phase === 'result');
+  hud.showSpots(game.phase === 'walk' || game.phase === 'result');
 
   // Impact flash: a very short lift on the frame a crash lands.
   flash = Math.max(0, flash - dt * 5.5);
@@ -317,8 +349,8 @@ let debugView = false;
    * rig. The character keeps updating so its joint springs settle.
    */
   pausePose(trickIdx: number, shape = 1, x = 6, y = 18, z = -2) {
+    game.teleport(0);
     game.selectTrick(trickIdx);
-    game.spawn();
     game.phase = 'air';
     game.body.mode = 'air';
     game.body.pos.set(x, y, z);

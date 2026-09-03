@@ -4,7 +4,7 @@
  */
 import { Game, type GameInput } from '../src/sim/game.ts';
 
-const NO: GameInput = { jump: false, jumpEdge: false, stretch: false, rot: 0, restart: false, spotDelta: 0, trickDelta: 0 };
+const NO: GameInput = { jump: false, jumpEdge: false, stretch: false, rot: 0, restart: false, spotDelta: 0, trickDelta: 0, mx: 0, mz: 0, run: false, camYaw: 0 };
 
 export interface Plan {
   spot: number;
@@ -37,7 +37,7 @@ export interface Trace {
 
 export function runDive(plan: Plan, dt = 1 / 120): Trace {
   const g = new Game();
-  g.selectSpot(plan.spot);
+  g.teleport(plan.spot);
   let t = 0;
   let peakOmega = 0, tuckOmega = 0, layoutOmega = 0, maxSpeed = 0;
   let crashedOnRock = false;
@@ -46,10 +46,10 @@ export function runDive(plan: Plan, dt = 1 / 120): Trace {
 
   for (let step = 0; step < 3000; step++) {
     const air = launchT >= 0 ? t - launchT : -1;
-    inp.jump = false; inp.stretch = false; inp.rot = 0; inp.jumpEdge = false;
+    inp.jump = false; inp.stretch = false; inp.rot = 0; inp.jumpEdge = false; inp.mz = 0; inp.mx = 0;
     if (launchT < 0) {
       inp.jump = t < plan.charge;
-      inp.rot = t < plan.spinHold ? plan.spinDir : 0;
+      inp.mz = t < plan.spinHold ? plan.spinDir : 0;
     } else {
       if (air >= plan.tuckAt && air < plan.tuckAt + plan.tuckFor) inp.jump = true;
       else if (air >= plan.tuckAt + plan.tuckFor && air < plan.tuckAt + plan.tuckFor + plan.stretchFor) {

@@ -52,8 +52,11 @@ async function advance(seconds, fps = 40) {
 }
 
 let shotN = 0;
+let mouseX = W / 2, mouseY = H / 2;
 for (const cmd of script) {
   try {
+    if (cmd.click) { await page.mouse.click(mouseX, mouseY); await advance(0.05); }
+    if (cmd.mouse) { mouseX += cmd.mouse[0]; mouseY += cmd.mouse[1]; await page.mouse.move(mouseX, mouseY, { steps: 4 }); }
     if (cmd.set) await page.evaluate((o) => (window).__cala.set(o), cmd.set);
     if (cmd.crash) await page.evaluate(() => (window).__cala.crash());
     if (cmd.pose !== undefined) await page.evaluate((a) => (window).__cala.pausePose(...a), cmd.pose);

@@ -48,6 +48,16 @@ export const LAYOUT = {
   areaSlim: 0.0013,
 };
 
+/**
+ * Nine tricks, not fifteen. Every one of these is a genuinely different body
+ * configuration with its own inertia tensor and drag profile -- not a
+ * reskin of Tuck with a new name attached. A "Front Flip" and a "Back Flip"
+ * are not on this list because they are not shapes: they are what you get by
+ * leaning forward or back at take-off (see LAUNCH in game.ts) while holding
+ * any of these. The scoring layer already names the result correctly --
+ * "Double Front Tuck", "2 1/2 Back Pike" -- from the rotation you actually
+ * flew, which is a more honest source of truth than a menu entry could be.
+ */
 export const TRICKS: Trick[] = [
   {
     id: 'tuck', name: 'Tuck', blurb: 'Knees to chest. Spins fastest, opens quickest.',
@@ -62,10 +72,29 @@ export const TRICKS: Trick[] = [
     extension: 0.22, areaBroad: 0.0078, areaSlim: 0.0026, difficulty: 1.28,
   },
   {
-    id: 'star', name: 'Star', blurb: 'Spread wide. Barely rotates, and the air really grabs you.',
+    id: 'pencil', name: 'Pencil', blurb: 'Dead straight, arms locked overhead. No assist -- what you leave with is what you land with.',
+    intent: 'dive',
+    // Deliberately close to the LAYOUT baseline: committing to a pencil barely
+    // changes your inertia at all, because the whole point of the trick is
+    // holding the line rather than gaining anything from folding up.
+    inertia: [0.205, 0.0135, 0.210], halfLength: 1.18, radius: 0.185,
+    extension: 1.0, areaBroad: 0.0092, areaSlim: 0.0012, difficulty: 1.85,
+  },
+  {
+    id: 'star', name: 'Swan', blurb: 'Spread wide. Barely rotates, and the air really grabs you.',
     intent: 'dive',
     inertia: [0.2300, 0.0900, 0.2400], halfLength: 0.95, radius: 0.30,
     extension: 0.52, areaBroad: 0.0132, areaSlim: 0.0072, difficulty: 1.55,
+  },
+  {
+    id: 'twister', name: 'Twister', blurb: 'Straight, arms pinned to your sides. Slow to somersault, fast to twist.',
+    intent: 'dive',
+    // Pulling the arms in close to the long axis is exactly what a real
+    // twister does: it does almost nothing to the somersault/cartwheel
+    // inertia but roughly halves the twist-axis inertia, so the same input
+    // that barely rotates you end over end spins you hard around your spine.
+    inertia: [0.150, 0.0068, 0.160], halfLength: 1.05, radius: 0.20,
+    extension: 0.62, areaBroad: 0.0085, areaSlim: 0.0020, difficulty: 1.35,
   },
   {
     id: 'bomb', name: 'Cannonball', blurb: 'Hug your knees and land on it. Judged on the splash.',
@@ -74,10 +103,28 @@ export const TRICKS: Trick[] = [
     extension: 0.0, areaBroad: 0.0090, areaSlim: 0.0070, difficulty: 0.85,
   },
   {
-    id: 'manu', name: 'Manu', blurb: 'A folded V, in seat first. Moves the most water of anything.',
+    id: 'manu', name: 'Manu', blurb: 'A folded V, in seat first. Moves more water than almost anything.',
     intent: 'bomb',
     inertia: [0.0820, 0.0340, 0.0980], halfLength: 0.62, radius: 0.31,
     extension: 0.10, areaBroad: 0.0122, areaSlim: 0.0076, difficulty: 1.0,
+  },
+  {
+    id: 'candle', name: 'Candle', blurb: 'Arms crossed, straight and narrow, straight down. Sticking it means barely a splash.',
+    intent: 'bomb',
+    // A candle is the bomb family's odd one out: the skill is entering
+    // almost as cleanly as a dive despite being judged as a bomb, so a
+    // well-placed one scores near the bottom of the bomb scale on purpose.
+    inertia: [0.075, 0.032, 0.088], halfLength: 0.68, radius: 0.24,
+    extension: 0.30, areaBroad: 0.0068, areaSlim: 0.0034, difficulty: 0.95,
+  },
+  {
+    id: 'watermelon', name: 'Watermelon', blurb: 'Arms and legs thrown wide, flat as you can stay. Moves the most water in the cove.',
+    intent: 'bomb',
+    // Visually close to a Swan, but with low extension instead of high: a
+    // Swan wants the air to catch it and true it up for a clean entry, a
+    // Watermelon wants to resist that and stay broadside all the way down.
+    inertia: [0.2400, 0.0980, 0.2500], halfLength: 0.98, radius: 0.33,
+    extension: 0.15, areaBroad: 0.0145, areaSlim: 0.0080, difficulty: 1.05,
   },
 ];
 

@@ -3,8 +3,8 @@ import { Game, type GameInput } from '../src/sim/game.ts';
 /** Reproduces "I jump once and then I'm stuck in a jump loop". */
 function run(label: string, holdJump: (t: number) => boolean) {
   const g = new Game();
-  g.selectSpot(0);
-  const inp: GameInput = { jump: false, jumpEdge: false, stretch: false, rot: 0, restart: false, spotDelta: 0, trickDelta: 0 };
+  g.teleport(0);
+  const inp: GameInput = { jump: false, jumpEdge: false, stretch: false, rot: 0, restart: false, spotDelta: 0, trickDelta: 0, mx: 0, mz: 0, run: false, camYaw: 0 };
   let prev = false;
   let launches = 0, spawns = 0;
   let last = g.phase;

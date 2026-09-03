@@ -202,4 +202,15 @@ export class Audio {
   }
 
   ui() { this.tone(760, 0.06, 0.035, 'triangle'); }
+
+  /** A single footfall on rock. Quiet -- this plays a lot. */
+  footstep() {
+    this.burst(0.06, 'bandpass', 900, 500, 1.6, 0.028 + Math.random() * 0.012);
+  }
+
+  /** Landing back on solid ground after a hop, scaled by impact speed. */
+  land(speed: number) {
+    const f = clamp01(speed / 6);
+    this.burst(0.09, 'lowpass', 1000, 300, 1.0, 0.05 + f * 0.09);
+  }
 }

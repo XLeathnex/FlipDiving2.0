@@ -182,7 +182,13 @@ export class DiverBody {
   bodyRight(out = new V3()): V3 { return this.orient.rotate(BODY_X, out); }
   bodyFacing(out = new V3()): V3 { return this.orient.rotate(BODY_Z, out); }
 
-  launch(vel: V3, spin: number, lateralSpin = 0) {
+  /**
+   * @param spinL angular momentum per unit mass about the somersault axis,
+   *   m^2/s. Passing momentum rather than a rate matters: the same take-off
+   *   produces the same momentum whatever shape you happen to be in, which is
+   *   what makes charge and lean combine the way they physically should.
+   */
+  launch(vel: V3, spinL: number, lateralL = 0) {
     this.vel.copy(vel);
     this.mode = 'air';
     this.timeSinceLaunch = 0;
@@ -194,7 +200,7 @@ export class DiverBody {
     this.restingTime = 0;
     // Angular momentum about the diver's own somersault axis, converted to world.
     poseAt(this.shape, this.trick, this.pose);
-    _t1.set(this.pose.inertia.x * spin, 0, this.pose.inertia.z * lateralSpin);
+    _t1.set(spinL, 0, lateralL);
     this.orient.rotate(_t1, this.L);
   }
 

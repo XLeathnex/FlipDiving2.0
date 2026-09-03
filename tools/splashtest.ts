@@ -6,9 +6,9 @@ interface Row { label: string; speed: number; align: number; area: number; disp:
 
 function dive(trickIdx: number, tuckFor: number, openAfter: boolean, spot = 3): Row {
   const g = new Game();
-  g.selectSpot(spot);
+  g.teleport(spot);
   g.selectTrick(trickIdx);
-  const inp: GameInput = { jump: false, jumpEdge: false, stretch: false, rot: 0, restart: false, spotDelta: 0, trickDelta: 0 };
+  const inp: GameInput = { jump: false, jumpEdge: false, stretch: false, rot: 0, restart: false, spotDelta: 0, trickDelta: 0, mx: 0, mz: 0, run: false, camYaw: 0 };
   let t = 0, launch = -1;
   let phys: any = null;
   for (let i = 0; i < 2400; i++) {
