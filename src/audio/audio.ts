@@ -139,27 +139,45 @@ export class Audio {
   }
 
   /**
-   * @param quality 0..1 entry quality
-   * @param speed   entry speed
+   * Water entry, driven by the same physics as the visual splash rather than
+   * by a grade. `displace` (m^3/s) sets how big and long the sound is, `slam`
+   * (area * v^2) sets how violent the initial strike is, and `align` decides
+   * whether it is a tight bright crack or a broad low slap.
    */
-  splash(quality: number, speed: number) {
-    const p = clamp01(speed / 26);
-    const rip = clamp01(quality);
-    // The rip: short, tight, bright -- the sound of a body making a small hole.
-    if (rip > 0.55) {
-      this.burst(lerp(0.16, 0.09, rip), 'bandpass', lerp(1800, 4200, rip), lerp(700, 1600, rip), lerp(1.2, 3.4, rip), 0.30 * (0.5 + p));
-      this.tone(lerp(140, 220, rip), 0.22, 0.16 * p, 'sine', 60);
+  splash(displace: number, slam: number, align: number, speed: number) {
+    const mag = clamp01(displace / 20);
+    const hit = clamp01(slam / 420);
+    const arrow = clamp01(align);
+    const flat = 1 - arrow;
+
+    // The strike itself: narrow and bright when streamlined, broad and low when flat.
+    this.burst(
+      lerp(0.09, 0.34, flat), 'bandpass',
+      lerp(3800, 900, flat), lerp(1500, 240, flat),
+      lerp(3.2, 0.9, flat), lerp(0.22, 0.44, flat) * (0.35 + hit),
+    );
+    // Body of water closing over: length and weight follow the volume moved.
+    this.burst(
+      0.22 + mag * 0.75, 'lowpass',
+      lerp(1600, 2600, mag), lerp(220, 130, mag),
+      0.7, (0.10 + 0.34 * mag) * (0.4 + hit * 0.7), true, 0.03,
+    );
+    // The slap. Only a flat entry has one, and it is the sound you learn to dread.
+    if (flat > 0.45) {
+      this.tone(lerp(130, 66, flat) * (0.85 + 0.3 * mag), 0.26 + 0.2 * mag, 0.34 * hit * flat, 'sine', 42);
     }
-    // The body of the splash: broader and lower the flatter you land.
-    const flat = 1 - rip;
-    this.burst(lerp(0.30, 0.75, flat), 'lowpass', lerp(2400, 1500, flat), lerp(300, 160, flat), 0.7, lerp(0.16, 0.42, flat) * (0.45 + p));
-    if (flat > 0.5) {
-      // The slap. This is the sound you learn to dread.
-      this.tone(lerp(120, 74, flat), 0.30, 0.30 * p * flat, 'sine', 44);
-      this.burst(0.20, 'bandpass', 700, 220, 1.4, 0.28 * flat * p);
+    // Low thump of displacement, present in anything big.
+    if (mag > 0.25) this.tone(lerp(120, 58, mag), 0.30, 0.26 * mag * (0.4 + hit), 'sine', 38);
+
+    // The cavity collapsing back up, a fifth of a second later. Tight and
+    // whistling after a clean entry, a fat gulp after a cannonball.
+    const cavity = clamp01(speed / 22) * (0.18 + 0.82 * arrow);
+    if (cavity > 0.08) {
+      const delay = 0.13 + 0.011 * speed;
+      this.burst(0.20 + 0.2 * mag, 'bandpass', lerp(500, 2200, arrow), lerp(1400, 620, arrow),
+        lerp(1.4, 3.0, arrow), 0.18 * cavity, false, delay);
+      this.tone(lerp(180, 320, arrow), 0.24, 0.09 * cavity, 'sine', lerp(90, 150, arrow), delay);
     }
-    // Water closing over the hole.
-    this.burst(0.55, 'lowpass', 900, 220, 0.6, 0.10 * p, true, lerp(0.12, 0.26, flat));
   }
 
   crash(force: number, hard: number) {

@@ -1,5 +1,5 @@
 import { V3, Quat, clamp, clamp01, lerp } from '../core/vec.ts';
-import { poseAt, collisionSpheres, type PoseData } from './pose.ts';
+import { poseAt, collisionSpheres, newPose, trickById, BODY_MASS, type PoseData, type Trick } from './tricks.ts';
 
 export const GRAVITY = 9.81;
 const AIR_RHO = 1.225;
@@ -78,12 +78,27 @@ const BODY_X = new V3(1, 0, 0);
 const BODY_Z = new V3(0, 0, 1);
 
 export interface ImpactEvent {
-  kind: 'solid' | 'water';
+  kind: 'solid' | 'water' | 'churn';
   speed: number;
   /** Normal-component of impact speed. */
   normalSpeed: number;
   x: number; y: number; z: number;
   hard: number;
+  /**
+   * Water impacts carry the physics the splash is built from. There is nothing
+   * random in here: the same entry always throws the same splash, and a flatter
+   * or faster one always throws a bigger one.
+   */
+  /** Area the body presents to the flow, m^2. */
+  area: number;
+  /** Volume of water displaced per second at the moment of contact, m^3/s. */
+  displace: number;
+  /** area * speed^2 -- how violently the surface is struck. */
+  slam: number;
+  /** |dot(bodyAxis, velocityDir)|: 1 = arrow, 0 = broadside. */
+  align: number;
+  /** Velocity at impact, so the splash can lean the way the body was going. */
+  vx: number; vy: number; vz: number;
 }
 
 export class DiverBody {
@@ -95,7 +110,9 @@ export class DiverBody {
 
   shape = 0.32;
   shapeTarget = 0.32;
-  pose: PoseData = poseAt(0.32, { inertia: new V3(), halfLength: 1, radius: 0.2, extension: 1, areaBroad: 0, areaSlim: 0 });
+  /** The air trick currently selected. Decides what "fully committed" means. */
+  trick: Trick = trickById('tuck');
+  pose: PoseData = newPose();
 
   mode: BodyMode = 'ground';
   /** World-space angular velocity, derived each step. */
@@ -128,6 +145,12 @@ export class DiverBody {
   private timeSinceLaunch = 0;
   /** How long we have been motionless against solid geometry. */
   restingTime = 0;
+  /** Area presented to the flow this step, m^2. Drives drag and the splash. */
+  projArea = 0.1;
+  /** Volume of water displaced per second, m^3/s. Zero out of the water. */
+  displaceRate = 0;
+  private wasSubmerged = 0;
+  private churn = 0;
 
   reset(x: number, y: number, z: number, facing: number) {
     this.pos.set(x, y, z);
@@ -136,7 +159,7 @@ export class DiverBody {
     this.omega.set(0, 0, 0);
     this.omegaBody.set(0, 0, 0);
     this.shape = this.shapeTarget = 0.0;
-    poseAt(this.shape, this.pose);
+    poseAt(this.shape, this.trick, this.pose);
     // Face `facing` (radians about world Y), upright.
     this.orient.setAxisAngle(new V3(0, 1, 0), facing);
     this.mode = 'ground';
@@ -147,6 +170,8 @@ export class DiverBody {
     this.sinceSolid = 99;
     this.nearestSolid = 99;
     this.restingTime = 0;
+    this.wasSubmerged = 0;
+    this.churn = 0;
     this.impacts.length = 0;
   }
 
@@ -168,7 +193,7 @@ export class DiverBody {
     this.nearestSolid = 99;
     this.restingTime = 0;
     // Angular momentum about the diver's own somersault axis, converted to world.
-    poseAt(this.shape, this.pose);
+    poseAt(this.shape, this.trick, this.pose);
     _t1.set(this.pose.inertia.x * spin, 0, this.pose.inertia.z * lateralSpin);
     this.orient.rotate(_t1, this.L);
   }
@@ -187,7 +212,7 @@ export class DiverBody {
     const maxStep = rate * dt;
     const d = clamp(ctrl.shape - this.shape, -maxStep, maxStep);
     this.shape = clamp01(this.shape + d);
-    poseAt(this.shape, this.pose);
+    poseAt(this.shape, this.trick, this.pose);
 
     this.syncOmega();
 
@@ -204,14 +229,19 @@ export class DiverBody {
     // --- 2. Linear forces (accelerations; mass is normalised to 1) ---
     const acc = _acc.set(0, -GRAVITY, 0);
 
+    let align = 1;
     if (speed > 0.01) {
       _t1.copy(this.vel).scale(1 / speed);            // velocity direction
-      const align = Math.abs(_axis.dot(_t1));         // 1 = arrow, 0 = broadside
+      align = Math.abs(_axis.dot(_t1));               // 1 = arrow, 0 = broadside
       const area = lerp(this.pose.areaBroad, this.pose.areaSlim, align);
       const rho = lerp(AIR_RHO, WATER_RHO, sub);
       const cd = lerp(CD_AIR, CD_WATER, sub);
       const dragA = 0.5 * rho * cd * area * speed;    // per unit speed
       acc.addScaled(this.vel, -dragA);
+      // The same projected area the drag uses, in real square metres. Every
+      // splash in the game is a function of this number and the speed.
+      this.projArea = area * BODY_MASS;
+      this.displaceRate = this.projArea * speed;
     }
     // Buoyancy: a human is very slightly less dense than seawater, so a deep
     // entry decelerates and then floats back up. That "come up for air" beat is
@@ -294,13 +324,32 @@ export class DiverBody {
     }
 
     // --- 5. Water surface crossing ---
-    if ((this.mode === 'air' || this.mode === 'crashed') && sub > 0.02) {
+    // The moment of first contact carries the full physics of the impact. After
+    // that, as long as the body is still tearing through the surface, it keeps
+    // throwing water in proportion to how much it is displacing -- so a body
+    // that goes deep and fast keeps feeding the plume, and one that skips off
+    // barely disturbs it.
+    if ((this.mode === 'air' || this.mode === 'crashed') && sub > 0.02 && this.wasSubmerged <= 0.02) {
       this.impacts.push({
         kind: 'water', speed, normalSpeed: Math.abs(this.vel.y),
         x: this.pos.x, y: waterY, z: this.pos.z, hard: 0,
+        area: this.projArea, displace: this.projArea * speed, slam: this.projArea * speed * speed,
+        align, vx: this.vel.x, vy: this.vel.y, vz: this.vel.z,
       });
       if (this.mode === 'air') this.mode = 'water';
+    } else if (sub > 0.02 && sub < 0.99 && speed > 3.5) {
+      this.churn += this.projArea * speed * dt;
+      if (this.churn > 0.55) {
+        this.churn = 0;
+        this.impacts.push({
+          kind: 'churn', speed, normalSpeed: Math.abs(this.vel.y),
+          x: this.pos.x, y: waterY, z: this.pos.z, hard: 0,
+          area: this.projArea, displace: this.projArea * speed, slam: this.projArea * speed * speed,
+          align, vx: this.vel.x, vy: this.vel.y, vz: this.vel.z,
+        });
+      }
     }
+    this.wasSubmerged = sub;
     if (this.mode === 'water' && sub <= 0.001) {
       // Left the water again (a skip off the surface) -- back to falling.
       this.mode = 'air';
@@ -359,6 +408,8 @@ export class DiverBody {
             this.impacts.push({
               kind: 'solid', speed: Math.hypot(pvx, pvy, pvz), normalSpeed: impactSpeed,
               x: cx - n.x * s.r, y: cy - n.y * s.r, z: cz - n.z * s.r, hard: _contact.hard,
+              area: this.projArea, displace: 0, slam: 0, align: 1,
+              vx: this.vel.x, vy: this.vel.y, vz: this.vel.z,
             });
             this.sinceSolid = 0;
           }

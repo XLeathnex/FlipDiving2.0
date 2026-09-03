@@ -33,7 +33,7 @@ const CSS = `
 .best { font-size: 12px; color: var(--dim); font-variant-numeric: tabular-nums; margin-top: 2px; }
 
 /* Altitude ladder: how much time is left, at a glance. */
-#ladder { position: absolute; left: 26px; top: 50%; transform: translateY(-50%); width: 46px; height: 46vh; min-height: 220px; opacity: 0; transition: opacity .22s; }
+#ladder { position: absolute; left: 26px; top: 47%; transform: translateY(-50%); width: 46px; height: 42vh; min-height: 190px; opacity: 0; transition: opacity .22s; }
 #ladder.on { opacity: 1; }
 #ladder .rail { position: absolute; left: 15px; top: 0; bottom: 0; width: 2px; background: linear-gradient(to bottom, rgba(255,255,255,.05), rgba(255,255,255,.28)); border-radius: 2px; }
 #ladder .sea { position: absolute; left: 6px; right: 6px; bottom: 0; height: 2px; background: var(--ink); opacity: .8; }
@@ -83,10 +83,19 @@ const CSS = `
 #spots .s .pb { display: block; font-size: 10px; color: rgba(255,181,98,.72); letter-spacing: .04em; }
 #result .newbest { font-size: 11px; letter-spacing: .22em; text-transform: uppercase; color: var(--warm); margin-top: 10px; }
 
+/* Air trick: what Space does. Bottom-left so it sits under the thumb's eye. */
+#trick { position: absolute; right: 22px; top: 63%; text-align: right; transition: opacity .25s; }
+#trick .lbl { margin-bottom: 4px; }
+#trick .name { font-size: 21px; font-weight: 650; letter-spacing: -.01em; }
+#trick .name .keys { font-size: 10.5px; font-weight: 500; letter-spacing: .12em; color: rgba(242,245,248,.45); margin-right: 9px; }
+#trick .desc { font-size: 12px; color: var(--dim); max-width: 250px; line-height: 1.4; margin-top: 3px; margin-left: auto; }
+#trick .bombtag { display: inline-block; font-size: 9.5px; letter-spacing: .16em; text-transform: uppercase;
+  background: rgba(255,181,98,.20); color: var(--warm); padding: 2px 7px; border-radius: 99px; margin-left: 8px; vertical-align: 2px; }
+
 /* Help. */
 #help { position: absolute; left: 50%; bottom: 20px; transform: translateX(-50%); display: flex; gap: 20px; font-size: 11.5px; color: var(--dim); transition: opacity .35s; }
 #help b { color: var(--ink); font-weight: 600; }
-#hint { position: absolute; left: 50%; bottom: 66px; transform: translateX(-50%); font-size: 13px; color: rgba(242,245,248,.78); transition: opacity .3s; text-align: center; max-width: 62vw; }
+#hint { position: absolute; left: 50%; bottom: 62px; transform: translateX(-50%); font-size: 13px; color: rgba(242,245,248,.78); transition: opacity .3s; text-align: center; max-width: 46vw; }
 #blurb { font-size: 12.5px; color: var(--dim); max-width: 250px; line-height: 1.42; margin-top: 10px; transition: opacity .3s; }
 .hide { opacity: 0 !important; }
 
@@ -146,26 +155,33 @@ export class Hud {
       </div>
       <div id="result">
         <div class="grade" id="grade">Clean</div>
-        <div class="trick" id="trick"></div>
+        <div class="trick" id="trickLine"></div>
         <div class="pts" id="pts">0</div>
         <div class="chips" id="chips"></div>
         <div class="newbest" id="newbest"></div>
         <div class="again">Space to go again</div>
       </div>
       <div id="spots"></div>
+      <div id="trick">
+        <div class="lbl">Air trick</div>
+        <div class="name"><span class="keys">Z / X</span><span id="trickName">Tuck</span><span class="bombtag" id="trickTag" style="display:none">Splash</span></div>
+        <div class="desc" id="trickDesc"></div>
+      </div>
       <div id="hint"></div>
       <div id="help">
         <span><b>Hold Space</b> charge</span>
         <span><b>A / D</b> rotation</span>
         <span><b>Space</b> tuck</span>
         <span><b>W</b> straighten</span>
+        <span><b>Z / X</b> trick</span>
         <span><b>R</b> retry</span>
         <span><b>Q / E</b> spot</span>
       </div>`;
     parent.appendChild(this.el);
     for (const id of ['spotName', 'spotH', 'score', 'best', 'ladder', 'dmark', 'altTxt', 'ttwTxt',
       'rot', 'rotN', 'rotD', 'takeoff', 'powFill', 'spinFill', 'spinLbl', 'result', 'grade', 'trick',
-      'pts', 'chips', 'newbest', 'spots', 'help', 'hint', 'blurb', 'm1', 'm2', 'm3']) {
+      'pts', 'chips', 'newbest', 'spots', 'help', 'hint', 'blurb', 'm1', 'm2', 'm3',
+      'trick', 'trickLine', 'trickName', 'trickDesc', 'trickTag']) {
       this.q[id] = document.getElementById(id)!;
     }
   }
@@ -181,6 +197,10 @@ export class Hud {
   showSpots(on: boolean) { this.q.spots.classList.toggle('on', on); }
 
   update(h: HudState, result: DiveResult | null, sinceResult: number, blurb: string, best: number, lastScore: number) {
+    this.q.trickName.textContent = h.trick.name;
+    this.q.trickDesc.textContent = h.trick.blurb;
+    (this.q.trickTag as HTMLElement).style.display = h.trick.intent === 'bomb' ? '' : 'none';
+
     this.q.spotName.textContent = h.spotName;
     this.q.spotH.textContent = `${h.spotHeight.toFixed(0)} m`;
     this.q.best.textContent = `Best ${best.toLocaleString()}`;
@@ -240,12 +260,13 @@ export class Hud {
       const g = this.q.grade;
       g.textContent = result.grade;
       g.className = 'grade ' + (result.quality > 0.7 ? 'good' : result.quality > 0.42 ? 'mid' : 'bad');
-      this.q.trick.textContent = result.trickName;
+      this.q.trickLine.textContent = result.trickName;
       this.q.pts.textContent = `+${result.score.toLocaleString()}`;
       this.q.chips.innerHTML = result.chips.map((c) => `<div class="chip">${c}</div>`).join('');
       this.q.newbest.textContent = result.newBest ? 'Personal best' : '';
     }
 
+    this.q.trick.classList.toggle('hide', h.phase === 'result');
     this.q.blurb.textContent = h.phase === 'ready' ? blurb : '';
     this.q.blurb.classList.toggle('hide', h.phase !== 'ready');
 

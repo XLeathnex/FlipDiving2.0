@@ -21,15 +21,34 @@ landing — it just scores badly and sounds painful.
 |---|---|
 | **Hold Space** | Load the jump. Longer hold = more height and distance. |
 | **A / D** *(while loading)* | Set the direction and amount of rotation. Hold longer for more. |
-| **Space** *(in the air)* | Tuck. Your moment of inertia drops, so you spin roughly 3× faster. |
+| **Space** *(in the air)* | Commit to your air trick. In a tuck your moment of inertia drops, so you spin roughly 3× faster. |
 | **W** *(in the air)* | Straighten out. Rotation slows, and the airflow starts pulling you into line. |
+| **Z / X** | Change air trick. Works mid-air too. |
 | **A / D** *(in the air)* | A small pitch correction. Enough to save a near miss, not enough to fly. |
 | **Space / R** | Go again, immediately. |
 | **Q / E** or **1–5** | Change spot. |
 | **M** | Mute. |
 
-Nothing is held back or unlocked. All five spots are available from the first
-second.
+Nothing is held back or unlocked. All five spots and all five tricks are
+available from the first second.
+
+## Tricks
+
+Space commits you to whichever trick is selected, and each one is a different
+set of physics rather than a different animation.
+
+| | | |
+|---|---|---|
+| **Tuck** | dive | Smallest moment of inertia, so it spins fastest and opens quickest. |
+| **Pike** | dive | Folded at the hips, legs straight. Rotates slower, so it pays more per somersault. |
+| **Star** | dive | Spread wide. Rotates slower than a *layout* does, and the air grabs you hard. |
+| **Cannonball** | bomb | A ball is never streamlined from any angle. Judged on the splash. |
+| **Manu** | bomb | A folded V, in seat first. Moves more water than anything else in the game. |
+
+The two **bomb** tricks invert the goal. A dive is scored on how *little* water
+you move; a bomb on how much. Both top out at roughly the same score, so
+neither is the "real" way to play — and opening out of a manu on the way down
+scores about a tenth of what committing to it does.
 
 ## Why it works the way it does
 
@@ -62,8 +81,31 @@ construction.
 **Entry is graded on one thing above all others:** whether the body is
 travelling along its own long axis. That is what a rip entry physically *is* —
 the body following the hole it makes. Speed, verticality, residual spin and how
-straight you are all modulate it. The splash is a direct function of the same
-number, so you can read your grade off the water before the word appears.
+straight you are all modulate it.
+
+**The splash is computed, not chosen.** There is no "belly flop splash" asset
+anywhere. At the moment of contact the simulation already knows the area the
+body presents to the flow, so the splash is built from three numbers:
+
+```
+area      m^2 presented to the flow
+displace  area x speed   -- cubic metres of water shoved aside per second
+align     1 if travelling along your own long axis, 0 if broadside
+```
+
+Three things then happen, in the order real water does them. The **crown** —
+the sheet thrown radially outward — follows `displace` for its size and `align`
+for its angle, so a flat body shoves a low wide skirt and a streamlined one
+pushes a narrow collar almost straight up. Behind a fast body an air **cavity**
+opens. A fifth of a second later that cavity collapses and fires a
+**Worthington jet** back up: a thin spike after a clean entry, a fat column
+after a cannonball, and nothing at all after a belly flop, because a belly flop
+never makes a cavity to collapse.
+
+Measured across the five tricks from the same platform, the water moved runs
+2.4 m³/s for a clean entry up to 13.2 for a committed manu. Nobody authored
+that ordering; it falls out of the areas. The sound is synthesised from the
+same three numbers, so it is continuous too.
 
 ## Layout
 
@@ -77,7 +119,9 @@ src/
     level.ts    Cala Nera itself, and the collision world
     scoring.ts  entry grading and dive scoring
     game.ts     state machine: ready -> charge -> air -> result
-  view/       three.js: meshing, water, character, camera, effects, HUD
+  view/       three.js: meshing, water, character, camera, HUD
+    spray.ts    instanced billboards stretched along their own velocity
+    splash.ts   crown, cavity and jet, all derived from the entry physics
   audio/      everything synthesised at runtime; no samples
 tools/        headless test harnesses (see below)
 ```
@@ -93,6 +137,8 @@ node --experimental-strip-types tools/tune.ts        # careless vs skilled play
 node --experimental-strip-types tools/balance.ts     # score balance per spot
 node --experimental-strip-types tools/spotcheck.ts   # every spot still stands on rock
 node --experimental-strip-types tools/scooptest.ts   # the air scoop cannot become a rotation engine
+node --experimental-strip-types tools/splashtest.ts  # every trick's entry physics, ordered by water moved
+node --experimental-strip-types tools/loopbug.ts     # holding or mashing jump cannot start a loop
 npm run build && npm run preview
 node tools/shot.mjs '[{"press":"Digit4"},{"wait":0.5},{"shot":"plank"}]'
 ```

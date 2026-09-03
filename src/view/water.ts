@@ -53,6 +53,7 @@ uniform vec2  uShoreSize;
 uniform samplerCube uEnv;
 uniform float uSplashT;
 uniform vec3  uSplashP;
+uniform float uSplashMag;
 varying vec3 vWPos;
 varying vec2 vUvW;
 
@@ -140,9 +141,13 @@ void main() {
   if (uSplashT >= 0.0) {
     float rr = length(p - uSplashP.xz);
     float age = uSplashT;
-    float rad = 0.8 + age * 5.2;
-    ring = smoothstep(1.1, 0.0, abs(rr - rad)) * exp(-age * 1.9) * smoothstep(0.02, 0.18, age);
-    ring += smoothstep(rad * 0.7, 0.0, rr) * exp(-age * 3.4) * 0.45;
+    // Both the size of the disturbance and how fast it spreads scale with how
+    // much water was actually displaced.
+    float m = uSplashMag;
+    float rad = 0.6 + m * 0.9 + age * (3.4 + 4.2 * m);
+    float w = 0.7 + 1.1 * m;
+    ring = smoothstep(w, 0.0, abs(rr - rad)) * exp(-age * 1.9) * smoothstep(0.02, 0.18, age) * (0.45 + 0.55 * m);
+    ring += smoothstep(rad * 0.7, 0.0, rr) * exp(-age * 3.4) * 0.55 * m;
   }
 
   float foam = clamp(crest * 0.45 + collar * 0.80 + ring, 0.0, 1.0);
@@ -230,6 +235,7 @@ export class Water {
         uEnv: { value: env },
         uSplashT: { value: -1 },
         uSplashP: { value: new THREE.Vector3() },
+        uSplashMag: { value: 0.5 },
       },
       side: THREE.DoubleSide,
       fog: false,
@@ -245,9 +251,11 @@ export class Water {
     this.mat.uniforms.uEye.value.copy(eye);
   }
 
-  splash(x: number, z: number) {
+  /** @param mag 0..1 splash magnitude, from the displaced volume rate. */
+  splash(x: number, z: number, mag: number) {
     this.mat.uniforms.uSplashP.value.set(x, 0, z);
     this.mat.uniforms.uSplashT.value = 0;
+    this.mat.uniforms.uSplashMag.value = Math.max(0.12, mag);
   }
 
   tickSplash(dt: number) {

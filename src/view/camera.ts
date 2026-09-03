@@ -105,7 +105,9 @@ export class CameraDirector {
         // Rise and pull back promptly. Sitting at wave height inside your own
         // splash is atmospheric for about a third of a second and then it is
         // just a white screen with a score hidden behind it.
-        const t = clamp01(game.sinceResult * 2.4);
+        // Hold position through the splash, then rise. Pulling back instantly
+        // means the biggest piece of feedback in the game happens off-camera.
+        const t = clamp01((game.sinceResult - 0.55) * 1.6);
         dist = lerp(dist, 13.5, t);
         camY = Math.max(lerp(camY, waterY + 7.5, t), waterY + 2.4);
       }

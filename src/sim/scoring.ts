@@ -1,9 +1,18 @@
 import { clamp01, lerp, smoothstep } from '../core/vec.ts';
 
-export type Grade = 'Perfect' | 'Clean' | 'Good' | 'Rough' | 'Belly Flop' | 'Back Flop' | 'Crash';
+export type Grade =
+  // Dives are judged on how little water you move.
+  | 'Perfect' | 'Clean' | 'Good' | 'Rough' | 'Belly Flop' | 'Back Flop'
+  // Bombs are judged on how much.
+  | 'Colossal' | 'Huge' | 'Solid' | 'Small' | 'Weak'
+  | 'Crash';
 
 export interface EntrySample {
   speed: number;
+  /** 'dive' judges cleanliness, 'bomb' judges displacement. */
+  intent: 'dive' | 'bomb';
+  /** Volume of water displaced per second at contact, m^3/s. */
+  displace: number;
   /** |dot(bodyAxis, velocityDir)| -- 1 means travelling exactly along your own axis. */
   align: number;
   /** -velocityDir.y -- 1 means straight down. */
@@ -32,6 +41,8 @@ export interface DiveResult {
   shapeName: string;
   chips: string[];
   trickName: string;
+  /** The air trick that was flown, e.g. "Manu". */
+  shape: string;
   /** Set by the game layer when this beat the spot's personal best. */
   newBest?: boolean;
 }
@@ -46,6 +57,20 @@ export interface DiveResult {
  */
 export function gradeEntry(s: EntrySample): { grade: Grade; quality: number; multiplier: number } {
   if (s.crashed) return { grade: 'Crash', quality: 0, multiplier: 0.06 };
+
+  // --- Bombs invert the whole thing. The goal is to move as much water as
+  // possible, so the grade reads straight off the displacement the physics
+  // produced: broad shape, high speed, hitting flat. Nothing else to balance.
+  if (s.intent === 'bomb') {
+    const q = clamp01((s.displace - 2.5) / 12.0);
+    let grade: Grade;
+    if (q >= 0.82) grade = 'Colossal';
+    else if (q >= 0.62) grade = 'Huge';
+    else if (q >= 0.40) grade = 'Solid';
+    else if (q >= 0.20) grade = 'Small';
+    else grade = 'Weak';
+    return { grade, quality: q, multiplier: lerp(0.25, 2.15, Math.pow(q, 1.25)) };
+  }
 
   const aAlign = Math.pow(s.align, 1.35);
   // Rotating on the way in tears the entry open. Fast dives are less forgiving.
@@ -105,6 +130,9 @@ function twistName(twist: number): string {
 
 export interface DiveStats {
   fall: number;
+  /** Rotation-scoring multiplier from the trick that was flown. */
+  difficulty: number;
+  trickName: string;
   somersault: number;
   twist: number;
   /** Mean body shape while actually rotating -- drives the difficulty multiplier. */
@@ -121,8 +149,9 @@ export function scoreDive(st: DiveStats, entry: ReturnType<typeof gradeEntry>): 
   const halfRots = Math.round(Math.abs(st.somersault) / Math.PI);
   const halfTwists = Math.round(Math.abs(st.twist) / Math.PI);
 
-  // Straight shapes are harder to rotate in, so they are worth more.
-  const difficulty = lerp(1.55, 1.0, clamp01(st.meanShape));
+  // Harder shapes rotate more slowly, so they are worth more per somersault.
+  // Committing less than fully to the shape scales the bonus back down.
+  const difficulty = lerp(1.0, st.difficulty, clamp01(st.meanShape * 1.3));
   const heightPts = st.fall * 3.1;
   const rotPts = halfRots * 38 * difficulty;
   const twistPts = halfTwists * 22;
@@ -153,5 +182,6 @@ export function scoreDive(st: DiveStats, entry: ReturnType<typeof gradeEntry>): 
     shapeName: st.shapeName,
     chips: chips.slice(0, 3),
     trickName: trickName(st.somersault, st.twist, st.shapeName),
+    shape: st.trickName,
   };
 }

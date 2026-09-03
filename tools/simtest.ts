@@ -4,7 +4,7 @@
  */
 import { Game, type GameInput } from '../src/sim/game.ts';
 
-const NO: GameInput = { jump: false, jumpEdge: false, stretch: false, rot: 0, restart: false, spotDelta: 0 };
+const NO: GameInput = { jump: false, jumpEdge: false, stretch: false, rot: 0, restart: false, spotDelta: 0, trickDelta: 0 };
 
 export interface Plan {
   spot: number;

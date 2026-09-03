@@ -8,7 +8,9 @@ import { buildProps } from './view/props.ts';
 import { Water } from './view/water.ts';
 import { Character } from './view/character.ts';
 import { CameraDirector } from './view/camera.ts';
-import { Particles, Trail } from './view/fx.ts';
+import { Trail } from './view/fx.ts';
+import { Spray } from './view/spray.ts';
+import { SplashFX } from './view/splash.ts';
 import { Hud, showLoader } from './view/hud.ts';
 import { Post } from './view/post.ts';
 import { Audio } from './audio/audio.ts';
@@ -95,8 +97,9 @@ scene.add(bounce);
 const character = new Character();
 scene.add(character.root);
 
-const particles = new Particles();
-scene.add(particles.points);
+const spray = new Spray();
+scene.add(spray.mesh);
+const splash = new SplashFX(spray);
 const trail = new Trail();
 scene.add(trail.mesh);
 
@@ -137,7 +140,7 @@ function resize() {
   renderer.setSize(w, h, false);
   const px = renderer.getPixelRatio();
   post.resize(Math.max(1, Math.round(w * px)), Math.max(1, Math.round(h * px)));
-  particles.setPixelScale(h * px, director.cam.fov);
+  spray.setStretch(h * px, director.cam.fov);
 }
 addEventListener('resize', resize);
 resize();
@@ -166,7 +169,8 @@ function frame() {
   const intent = input.poll();
   if (intent.toggleMute) audio.setMuted(!audio.muted);
   if (intent.toggleHelp) hud.toggleHelp();
-  if (intent.spotIndex >= 0) { game.selectSpot(intent.spotIndex); audio.ui(); }
+  if (intent.spotIndex >= 0) { game.selectSpot(intent.spotIndex, intent.jump); audio.ui(); }
+  if (intent.trickIndex >= 0) { game.selectTrick(intent.trickIndex); audio.ui(); }
 
   // Hit-stop: a very short freeze on hard impacts. Long enough to feel the
   // collision, short enough that it never eats an input.
@@ -174,7 +178,7 @@ function frame() {
 
   game.update(dt * scale, {
     jump: intent.jump, jumpEdge: intent.jumpEdge, stretch: intent.stretch, rot: intent.rot,
-    restart: intent.restart, spotDelta: intent.spotDelta,
+    restart: intent.restart, spotDelta: intent.spotDelta, trickDelta: intent.trickDelta,
   });
   if (intent.spotDelta) { hud.setSpots(game.level.spots, game.spotIndex, game.bestBySpot); audio.ui(); }
 
@@ -186,7 +190,8 @@ function frame() {
     switch (ev.t) {
       case 'spawn':
         trail.reset(_hp.set(b.pos.x, b.pos.y, b.pos.z));
-        particles.clear();
+        spray.clear();
+        splash.reset();
         hud.setSpots(lvl.spots, game.spotIndex, game.bestBySpot);
         break;
       case 'charge':
@@ -195,8 +200,11 @@ function frame() {
       case 'launch':
         audio.jump(game.charge);
         director.punch();
-        particles.takeoff(b.pos.x, b.pos.y, b.pos.z, game.charge);
+        spray.takeoff(b.pos.x, b.pos.y, b.pos.z, game.charge);
         hud.noteDive();
+        break;
+      case 'trick':
+        audio.ui();
         break;
       case 'crash':
         director.kick(0.95);
@@ -206,18 +214,21 @@ function frame() {
       case 'impact':
         if (ev.e.kind === 'solid') {
           audio.crash(ev.e.normalSpeed, ev.e.hard);
-          particles.rockHit(ev.e.x, ev.e.y, ev.e.z, 0, 1, 0, ev.e.normalSpeed);
+          spray.rockHit(ev.e.x, ev.e.y, ev.e.z, 0, 1, 0, ev.e.normalSpeed);
           director.kick(clamp01(ev.e.normalSpeed / 18) * 0.7);
         }
         break;
+      case 'churn':
+        splash.churn(ev.e);
+        break;
       case 'entry': {
         saveBests();
-        const q = ev.q;
-        particles.splash(ev.x, ev.y, ev.z, q, ev.speed, b.vel.x, b.vel.z);
-        water.splash(ev.x, ev.z);
-        audio.splash(q, ev.speed);
-        if (q > 0.72) audio.chime(q > 0.88);
-        director.kick(lerp(0.75, 0.18, q) * clamp01(ev.speed / 24));
+        splash.entry(ev.phys);
+        water.splash(ev.x, ev.z, splash.lastMagnitude);
+        audio.splash(ev.phys.displace, ev.phys.slam, ev.phys.align, ev.speed);
+        if (ev.reward > 0.72) audio.chime(ev.reward > 0.88);
+        // Shake follows how hard the water was hit, not how well it was judged.
+        director.kick(clamp01(ev.phys.slam / 380) * 0.85);
         break;
       }
     }
@@ -228,7 +239,7 @@ function frame() {
   const phase = b.mode === 'crashed' ? 'crashed'
     : game.phase === 'charge' ? 'charge'
     : game.phase === 'ready' ? 'ground' : 'air';
-  character.update(dt, b, phase);
+  character.update(dt, b, phase, game.charge);
   character.syncTransform(b);
 
   director.update(dt, game, innerWidth / innerHeight);
@@ -242,14 +253,12 @@ function frame() {
   character.headWorld(_hp);
   trail.update(_hp, cam.position, speed, game.phase === 'air' && speed > 5);
 
-  if (game.phase === 'air') {
-    particles.speedSpray(b.pos.x, b.pos.y, b.pos.z, speed, dt);
-  }
   if (b.submerged > 0.3 && speed > 1.5) {
-    particles.bubbles(b.pos.x, b.pos.y, b.pos.z, speed, dt);
+    spray.bubbles(b.pos.x, b.pos.y, b.pos.z, speed, dt);
   }
-  particles.setPixelScale(innerHeight * renderer.getPixelRatio(), cam.fov);
-  particles.update(dt, waterY);
+  spray.setStretch(innerHeight * renderer.getPixelRatio(), cam.fov);
+  splash.update(dt);
+  spray.update(dt, waterY);
 
   // Wind rises with airspeed; the last moment before the water tightens it.
   audio.setAirspeed(speed, b.submerged);

@@ -1,79 +1,68 @@
 import * as THREE from 'three';
 import { V3, clamp, clamp01, lerp } from '../core/vec.ts';
 import type { DiverBody } from '../sim/body.ts';
+import type { Trick } from '../sim/tricks.ts';
 
 /**
  * The diver.
  *
- * A jointed rig of capsules rather than a skinned mesh: no asset pipeline here,
- * and at the distances this game is played the silhouette is what matters.
- * The silhouette is also the entire read on how the dive is going, so the poses
- * are shaped for legibility first -- a tuck must look like a ball and a layout
- * must look like a line, instantly, from any angle.
+ * A jointed rig of capsules with spheres at the joints, driven by springs.
  *
- * Joints are springs rather than direct assignments. That gives the limbs a
- * little lag and overshoot for free, and lets a crash simply drop the stiffness
- * so the body goes limp and flails instead of holding a tidy pose.
+ * Sign conventions, because getting these wrong produces a body that folds
+ * backwards and reads as a broken puppet. Body frame is +Y up, +Z forward
+ * (chest), +X to the diver's right, and every limb hangs along -Y at rest:
+ *
+ *   hip flexion   knee toward chest  -> thigh.rotation.x    = -hip
+ *   knee flexion  heel toward seat   -> shin.rotation.x     = +knee
+ *   shoulder      side -> front -> overhead -> upperArm.x   = -shoulder
+ *   elbow flexion hand toward shoulder -> forearm.x         = -elbow
+ *   trunk flexion chest toward knees -> chest.rotation.x    = +spine
+ *   abduction     limb out sideways  -> rotation.z          = side * out
+ *
+ * The limbs point down and the trunk points up, which is why their flexion
+ * signs are opposite. That asymmetry is the whole trap.
  */
 
-interface Joint {
-  /** Current angle, radians. */
-  a: number;
-  v: number;
-  target: number;
-}
-
+interface Joint { a: number; v: number; target: number }
 const j = (): Joint => ({ a: 0, v: 0, target: 0 });
 const _axis = new V3();
 
-/** Joint set. Angles in radians; positive folds the body forwards. */
 interface PoseSet {
   hip: number; knee: number; ankle: number;
   shoulder: number; elbow: number;
-  /** Sideways arm spread, for the standing/ready pose. */
-  armOut: number;
-  spine: number;
-  head: number;
+  /** Sideways spread, arms and legs separately. */
+  armOut: number; legOut: number;
+  spine: number; head: number;
 }
 
-const P = {
-  // Two layouts, because both are correct and which one is correct depends on
-  // which end is going into the water first: arms overhead to make the hole for
-  // a head-first entry, arms locked at the sides for a feet-first one. Picking
-  // the right one automatically makes an entry look deliberate rather than lucky.
-  layout:  { hip: 0.00, knee: 0.02, ankle: -0.55, shoulder: 2.95, elbow: 0.04, armOut: 0.05, spine: -0.06, head: 0.10 },
-  layoutFeet: { hip: 0.00, knee: 0.02, ankle: -0.62, shoulder: 0.06, elbow: 0.06, armOut: 0.04, spine: -0.02, head: -0.05 },
-  pike:    { hip: 1.85, knee: 0.06, ankle: -0.50, shoulder: 2.05, elbow: 0.12, armOut: 0.16, spine: 0.20, head: 0.35 },
-  tuck:    { hip: 2.25, knee: 2.55, ankle: -0.30, shoulder: 1.10, elbow: 2.05, armOut: 0.22, spine: 0.34, head: 0.42 },
-  stand:   { hip: 0.02, knee: 0.06, ankle: 0.00, shoulder: 0.10, elbow: 0.14, armOut: 0.13, spine: 0.00, head: 0.00 },
-  crouch:  { hip: 0.72, knee: 1.15, ankle: 0.42, shoulder: -0.55, elbow: 0.42, armOut: 0.20, spine: 0.30, head: -0.12 },
-  limp:    { hip: 0.55, knee: 0.85, ankle: -0.10, shoulder: 0.75, elbow: 0.75, armOut: 0.40, spine: 0.15, head: 0.30 },
-} satisfies Record<string, PoseSet>;
+const POSES: Record<string, PoseSet> = {
+  stand:   { hip: 0.02, knee: 0.05, ankle: 0.00, shoulder: 0.12, elbow: 0.16, armOut: 0.12, legOut: 0.04, spine: 0.00, head: 0.00 },
+  crouch:  { hip: 0.78, knee: 1.30, ankle: 0.48, shoulder: -0.62, elbow: 0.40, armOut: 0.20, legOut: 0.07, spine: 0.38, head: -0.12 },
+  // Two layouts: arms overhead to make the hole for a head-first entry, arms
+  // locked at the sides for a feet-first one. Both are correct form.
+  layout:  { hip: 0.00, knee: 0.02, ankle: -1.05, shoulder: 2.95, elbow: 0.05, armOut: 0.05, legOut: 0.02, spine: -0.05, head: 0.10 },
+  layoutFeet: { hip: 0.00, knee: 0.02, ankle: -1.10, shoulder: 0.08, elbow: 0.06, armOut: 0.05, legOut: 0.02, spine: -0.02, head: -0.04 },
+  limp:    { hip: 0.55, knee: 0.90, ankle: -0.20, shoulder: 0.80, elbow: 0.70, armOut: 0.45, legOut: 0.30, spine: 0.12, head: 0.28 },
+
+  // --- one per trick ---
+  tuck:    { hip: 2.30, knee: 2.55, ankle: -0.25, shoulder: 1.15, elbow: 2.10, armOut: 0.30, legOut: 0.18, spine: 0.38, head: 0.40 },
+  pike:    { hip: 1.95, knee: 0.06, ankle: -0.90, shoulder: 1.78, elbow: 0.18, armOut: 0.14, legOut: 0.05, spine: 0.22, head: 0.30 },
+  star:    { hip: 0.34, knee: 0.05, ankle: -0.45, shoulder: 1.88, elbow: 0.08, armOut: 1.18, legOut: 0.52, spine: 0.02, head: 0.06 },
+  bomb:    { hip: 2.38, knee: 2.72, ankle: -0.15, shoulder: 1.02, elbow: 2.45, armOut: 0.55, legOut: 0.44, spine: 0.44, head: 0.46 },
+  manu:    { hip: 2.10, knee: 0.45, ankle: -0.55, shoulder: 1.55, elbow: 0.58, armOut: 0.24, legOut: 0.09, spine: -0.30, head: 0.24 },
+};
+
+const KEYS = ['hip', 'knee', 'ankle', 'shoulder', 'elbow', 'armOut', 'legOut', 'spine', 'head'] as const;
 
 function blend(a: PoseSet, b: PoseSet, t: number, out: PoseSet): PoseSet {
-  out.hip = lerp(a.hip, b.hip, t); out.knee = lerp(a.knee, b.knee, t);
-  out.ankle = lerp(a.ankle, b.ankle, t); out.shoulder = lerp(a.shoulder, b.shoulder, t);
-  out.elbow = lerp(a.elbow, b.elbow, t); out.armOut = lerp(a.armOut, b.armOut, t);
-  out.spine = lerp(a.spine, b.spine, t); out.head = lerp(a.head, b.head, t);
+  for (const k of KEYS) out[k] = lerp(a[k], b[k], t);
   return out;
 }
 
-// Kit chosen for legibility. In a tuck the body is a ball, so the only way to
-// read which way up you are is contrast between the parts: a dark vest on the
-// torso and upper arms, a hot accent at the hips, bare skin on the forearms and
-// shins. Rotation becomes visible as those bands sweeping past each other.
 const SKIN = 0xc98d63;
-const VEST = 0x123642;      // deep teal: reads dark against both sea and stone
-const TRUNKS = 0xe2571c;    // hot accent at the hips, the eye's anchor point
+const VEST = 0x123642;
+const TRUNKS = 0xe2571c;
 const HAIR = 0x1b1a19;
-
-function capsule(len: number, r: number, mat: THREE.Material): THREE.Mesh {
-  const g = new THREE.CapsuleGeometry(r, Math.max(0.001, len), 4, 10);
-  const m = new THREE.Mesh(g, mat);
-  m.castShadow = true;
-  m.receiveShadow = true;
-  return m;
-}
 
 export class Character {
   root = new THREE.Group();
@@ -86,102 +75,112 @@ export class Character {
   private upperArms: THREE.Group[] = [];
   private foreArms: THREE.Group[] = [];
 
-  private joints = {
-    hip: j(), knee: j(), ankle: j(), shoulder: j(), elbow: j(), armOut: j(), spine: j(), head: j(),
-  };
-  private cur: PoseSet = { ...P.stand };
-  private tgt: PoseSet = { ...P.stand };
-  /** 0 = fully controlled, 1 = limp. */
+  private joints: Record<string, Joint> = Object.fromEntries(KEYS.map((k) => [k, j()]));
+  private cur: PoseSet = { ...POSES.stand };
+  private tgt: PoseSet = { ...POSES.stand };
+  private lay: PoseSet = { ...POSES.layout };
   private limp = 0;
   private asym = 0;
   private t = 0;
   private leadSmooth = 1;
 
   constructor() {
-    const skin = new THREE.MeshStandardMaterial({ color: SKIN, roughness: 0.58, metalness: 0.0 });
-    const vest = new THREE.MeshStandardMaterial({ color: VEST, roughness: 0.52, metalness: 0.0 });
-    const trunks = new THREE.MeshStandardMaterial({ color: TRUNKS, roughness: 0.56, metalness: 0.0 });
-    const dark = new THREE.MeshStandardMaterial({ color: HAIR, roughness: 0.62, metalness: 0.0 });
+    const skin = new THREE.MeshStandardMaterial({ color: SKIN, roughness: 0.58 });
+    const vest = new THREE.MeshStandardMaterial({ color: VEST, roughness: 0.52 });
+    const trunks = new THREE.MeshStandardMaterial({ color: TRUNKS, roughness: 0.56 });
+    const dark = new THREE.MeshStandardMaterial({ color: HAIR, roughness: 0.62 });
+
+    /** Capsule of the given length, hanging downward from y = 0. */
+    const limb = (parent: THREE.Object3D, len: number, r: number, mat: THREE.Material) => {
+      const m = new THREE.Mesh(new THREE.CapsuleGeometry(r, len, 4, 10), mat);
+      m.position.y = -len / 2;
+      m.castShadow = true; m.receiveShadow = true;
+      parent.add(m);
+      return m;
+    };
+    /** A sphere at a pivot, so the joint reads as flesh and not a gap. */
+    const knuckle = (parent: THREE.Object3D, r: number, mat: THREE.Material, y = 0) => {
+      const m = new THREE.Mesh(new THREE.SphereGeometry(r, 10, 8), mat);
+      m.position.y = y;
+      m.castShadow = true;
+      parent.add(m);
+      return m;
+    };
 
     this.root.add(this.pelvis);
 
-    // Pelvis + chest, with the chest pivoting at the waist.
-    const hips = capsule(0.10, 0.135, trunks);
+    const hips = new THREE.Mesh(new THREE.CapsuleGeometry(0.135, 0.11, 4, 12), trunks);
     hips.position.y = 0.02;
+    hips.scale.set(1.0, 1.0, 0.86);
+    hips.castShadow = true;
     this.pelvis.add(hips);
 
     this.chest.position.y = 0.13;
     this.pelvis.add(this.chest);
-    const torso = capsule(0.30, 0.145, vest);
+    const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.148, 0.30, 4, 12), vest);
     torso.position.y = 0.20;
     torso.scale.set(1.06, 1, 0.82);
+    torso.castShadow = true; torso.receiveShadow = true;
     this.chest.add(torso);
-    const shoulders = capsule(0.16, 0.115, vest);
+    const shoulders = new THREE.Mesh(new THREE.CapsuleGeometry(0.118, 0.17, 4, 10), vest);
     shoulders.position.y = 0.385;
     shoulders.rotation.z = Math.PI / 2;
     shoulders.scale.set(1, 1, 0.85);
+    shoulders.castShadow = true;
     this.chest.add(shoulders);
 
-    // Head.
     this.head.position.y = 0.44;
     this.chest.add(this.head);
-    const neck = capsule(0.05, 0.048, skin);
-    neck.position.y = 0.03;
-    this.head.add(neck);
-    const skull = new THREE.Mesh(new THREE.SphereGeometry(0.106, 14, 12), skin);
-    skull.position.y = 0.135;
+    limb(this.head, 0.06, 0.05, skin);
+    const skull = knuckle(this.head, 0.108, skin, 0.135);
     skull.scale.set(0.92, 1.06, 1.0);
-    skull.castShadow = true;
-    this.head.add(skull);
-    const hair = new THREE.Mesh(new THREE.SphereGeometry(0.111, 12, 10), dark);
+    const hair = new THREE.Mesh(new THREE.SphereGeometry(0.113, 12, 10), dark);
     hair.position.set(0, 0.152, -0.012);
     hair.scale.set(0.92, 0.86, 1.0);
     this.head.add(hair);
 
     for (const side of [-1, 1]) {
-      // Legs.
+      // --- leg ---
       const thigh = new THREE.Group();
-      thigh.position.set(side * 0.085, -0.02, 0);
+      thigh.position.set(side * 0.085, -0.03, 0);
       this.pelvis.add(thigh);
-      const thighMesh = capsule(0.30, 0.088, trunks);
-      thighMesh.position.y = -0.19;
-      thigh.add(thighMesh);
+      knuckle(thigh, 0.093, trunks);
+      limb(thigh, 0.30, 0.090, trunks);
       this.thighs.push(thigh);
 
       const shin = new THREE.Group();
       shin.position.y = -0.40;
       thigh.add(shin);
-      const shinMesh = capsule(0.30, 0.066, skin);
-      shinMesh.position.y = -0.185;
-      shin.add(shinMesh);
+      knuckle(shin, 0.076, skin);
+      limb(shin, 0.30, 0.068, skin);
       this.shins.push(shin);
 
       const foot = new THREE.Group();
       foot.position.y = -0.375;
       shin.add(foot);
-      const footMesh = capsule(0.10, 0.048, skin);
-      footMesh.position.set(0, -0.045, 0.03);
-      footMesh.rotation.x = 1.15;
+      const footMesh = new THREE.Mesh(new THREE.CapsuleGeometry(0.050, 0.11, 3, 8), skin);
+      footMesh.position.set(0, -0.048, 0.030);
+      footMesh.rotation.x = 1.20;
+      footMesh.castShadow = true;
       foot.add(footMesh);
       this.feet.push(foot);
 
-      // Arms.
+      // --- arm ---
       const ua = new THREE.Group();
-      ua.position.set(side * 0.155, 0.375, 0);
+      ua.position.set(side * 0.158, 0.375, 0);
       this.chest.add(ua);
-      const uaMesh = capsule(0.22, 0.058, vest);
-      uaMesh.position.y = -0.145;
-      ua.add(uaMesh);
+      knuckle(ua, 0.066, vest);
+      limb(ua, 0.22, 0.060, vest);
       this.upperArms.push(ua);
 
       const fa = new THREE.Group();
       fa.position.y = -0.285;
       ua.add(fa);
-      const faMesh = capsule(0.21, 0.048, skin);
-      faMesh.position.y = -0.135;
-      fa.add(faMesh);
-      const hand = capsule(0.05, 0.045, skin);
-      hand.position.y = -0.27;
+      knuckle(fa, 0.054, skin);
+      limb(fa, 0.21, 0.050, skin);
+      const hand = new THREE.Mesh(new THREE.CapsuleGeometry(0.046, 0.06, 3, 8), skin);
+      hand.position.y = -0.272;
+      hand.castShadow = true;
       fa.add(hand);
       this.foreArms.push(fa);
     }
@@ -189,29 +188,23 @@ export class Character {
     this.root.name = 'diver';
   }
 
-  /** Where the head is in world space -- used for the motion trail. */
-  headWorld(out: THREE.Vector3): THREE.Vector3 {
-    return this.head.getWorldPosition(out);
-  }
+  headWorld(out: THREE.Vector3): THREE.Vector3 { return this.head.getWorldPosition(out); }
 
-  private _lay: PoseSet = { ...P.layout };
-
-  setPose(phase: 'ground' | 'charge' | 'air' | 'crashed', shape: number, charge: number, lead = 1) {
-    if (phase === 'ground') { Object.assign(this.tgt, P.stand); return; }
-    if (phase === 'charge') { blend(P.stand, P.crouch, clamp01(charge), this.tgt); return; }
-    if (phase === 'crashed') { Object.assign(this.tgt, P.limp); return; }
+  private setPose(phase: 'ground' | 'charge' | 'air' | 'crashed', shape: number, charge: number, lead: number, trick: Trick) {
+    if (phase === 'ground') { Object.assign(this.tgt, POSES.stand); return; }
+    if (phase === 'charge') { blend(POSES.stand, POSES.crouch, clamp01(charge), this.tgt); return; }
+    if (phase === 'crashed') { Object.assign(this.tgt, POSES.limp); return; }
     // In the air the pose tracks the physical shape scalar exactly, so what the
     // player sees is literally what the inertia tensor is doing.
-    const s = clamp01(shape);
-    blend(P.layoutFeet, P.layout, clamp01(lead * 0.5 + 0.5), this._lay);
-    if (s < 0.5) blend(this._lay, P.pike, s * 2, this.tgt);
-    else blend(P.pike, P.tuck, (s - 0.5) * 2, this.tgt);
+    blend(POSES.layoutFeet, POSES.layout, clamp01(lead * 0.5 + 0.5), this.lay);
+    blend(this.lay, POSES[trick.id] ?? POSES.tuck, clamp01(shape), this.tgt);
   }
 
-  update(dt: number, body: DiverBody, phase: 'ground' | 'charge' | 'air' | 'crashed') {
+  update(dt: number, body: DiverBody, phase: 'ground' | 'charge' | 'air' | 'crashed', charge: number) {
     this.t += dt;
-    // Which end is going in first, smoothed so the arms do not snap around when
-    // the body passes through horizontal.
+
+    // Which end goes in first, smoothed so the arms do not snap around as the
+    // body passes through horizontal.
     const speed = body.vel.len();
     let lead = 1;
     if (speed > 3) {
@@ -219,7 +212,7 @@ export class Character {
       lead = clamp((_axis.x * body.vel.x + _axis.y * body.vel.y + _axis.z * body.vel.z) / speed * 2.2, -1, 1);
     }
     this.leadSmooth += (lead - this.leadSmooth) * Math.min(1, dt * 3.2);
-    this.setPose(phase, body.shape, 0, this.leadSmooth);
+    this.setPose(phase, body.shape, charge, this.leadSmooth, body.trick);
 
     const wantLimp = phase === 'crashed' ? 1 : 0;
     this.limp += (wantLimp - this.limp) * Math.min(1, dt * (wantLimp ? 9 : 3));
@@ -228,16 +221,14 @@ export class Character {
     // stiffness down; the same solver then produces the flail.
     const stiff = lerp(255, 26, this.limp);
     const damp = lerp(29, 6.5, this.limp);
-    const keys = Object.keys(this.joints) as (keyof typeof this.joints)[];
-    for (const k of keys) {
+    for (let i = 0; i < KEYS.length; i++) {
+      const k = KEYS[i];
       const jt = this.joints[k];
-      jt.target = (this.tgt as any)[k];
-      const acc = (jt.target - jt.a) * stiff - jt.v * damp;
-      jt.v += acc * dt;
-      // Spin makes the limbs trail, which is most of what sells the rotation.
-      if (this.limp > 0.01) jt.v += Math.sin(this.t * (7.3 + keys.indexOf(k)) ) * this.limp * dt * 5.5;
+      jt.target = this.tgt[k];
+      jt.v += ((jt.target - jt.a) * stiff - jt.v * damp) * dt;
+      if (this.limp > 0.01) jt.v += Math.sin(this.t * (7.3 + i)) * this.limp * dt * 5.5;
       jt.a += jt.v * dt;
-      (this.cur as any)[k] = jt.a;
+      this.cur[k] = jt.a;
     }
 
     // A touch of asymmetry so the diver never looks like a mannequin.
@@ -249,12 +240,11 @@ export class Character {
     for (let i = 0; i < 2; i++) {
       const side = i === 0 ? -1 : 1;
       const a = this.asym * side;
-      this.thighs[i].rotation.set(c.hip + a, 0, side * -c.armOut * 0.55);
-      this.shins[i].rotation.x = -c.knee - a * 0.5;
+      this.thighs[i].rotation.set(-(c.hip + a), 0, side * (c.legOut + Math.abs(a) * 0.3));
+      this.shins[i].rotation.x = c.knee + a * 0.5;
       this.feet[i].rotation.x = c.ankle;
-      // Shoulder swings the arm from alongside the body up past the head.
-      this.upperArms[i].rotation.set(-c.shoulder - a * 0.8, 0, side * -c.armOut);
-      this.foreArms[i].rotation.x = c.elbow + a * 0.6;
+      this.upperArms[i].rotation.set(-(c.shoulder + a * 0.8), 0, side * c.armOut);
+      this.foreArms[i].rotation.x = -(c.elbow + a * 0.6);
     }
   }
 

@@ -1,7 +1,7 @@
 import { V3, clamp, clamp01, lerp } from '../core/vec.ts';
 import { DiverBody, type DiverControl, type ImpactEvent } from './body.ts';
 import { Level, type Spot } from './level.ts';
-import { shapeName } from './pose.ts';
+import { TRICKS, shapeLabel, trickById, type Trick } from './tricks.ts';
 import { gradeEntry, scoreDive, type DiveResult, type EntrySample, type DiveStats } from './scoring.ts';
 
 export type Phase = 'ready' | 'charge' | 'air' | 'result';
@@ -17,6 +17,8 @@ export interface GameInput {
   rot: number;
   restart: boolean;
   spotDelta: number;
+  /** -1 / +1 to cycle the air trick, or 0. */
+  trickDelta: number;
 }
 
 /** Launch feel. Small numbers, big consequences -- these get tuned by hand. */
@@ -54,6 +56,7 @@ export interface HudState {
   spotName: string;
   spotHeight: number;
   crashed: boolean;
+  trick: Trick;
 }
 
 export class Game {
@@ -62,6 +65,7 @@ export class Game {
   phase: Phase = 'ready';
 
   spotIndex = 3;
+  trickIndex = 0;
   charge = 0;
   spinCharge = 0;
 
@@ -77,12 +81,16 @@ export class Game {
   bestBySpot: Record<string, number> = {};
 
   /** Events for the presentation layer to consume each frame. */
-  events: ({ t: 'launch' } | { t: 'impact'; e: ImpactEvent } | { t: 'entry'; q: number; speed: number; x: number; y: number; z: number }
-    | { t: 'crash' } | { t: 'spawn' } | { t: 'charge' })[] = [];
+  events: ({ t: 'launch' } | { t: 'impact'; e: ImpactEvent }
+    | { t: 'entry'; reward: number; speed: number; x: number; y: number; z: number; phys: ImpactEvent }
+    | { t: 'crash' } | { t: 'spawn' } | { t: 'charge' } | { t: 'trick' }
+    | { t: 'churn'; e: ImpactEvent })[] = [];
 
   private ctrl: DiverControl = { shape: SHAPE_LOOSE, pitch: 0 };
   private lastShapeKey: 'tuck' | 'layout' | 'none' = 'none';
   private prevJump = false;
+  /** Set on spawn; cleared the first time the jump control is seen released. */
+  private needsJumpRelease = false;
   private prevStretch = false;
   private shapeAccum = 0;
   private shapeWeight = 0;
@@ -94,8 +102,20 @@ export class Game {
   constructor() { this.spawn(); }
 
   get spot(): Spot { return this.level.spots[this.spotIndex]; }
+  get trick(): Trick { return TRICKS[this.trickIndex]; }
 
-  spawn() {
+  selectTrick(i: number) {
+    this.trickIndex = (i + TRICKS.length) % TRICKS.length;
+    this.body.trick = this.trick;
+  }
+
+  /**
+   * @param holdingJump true if the jump control is down right now. If it is,
+   * the control must be released before it can load another jump -- otherwise
+   * holding it through a retry charges and fires immediately and the player is
+   * stuck in a loop they never asked to start.
+   */
+  spawn(holdingJump = false) {
     const s = this.spot;
     // yaw is stored as a small offset from "facing out to sea" (+X).
     this.body.reset(s.pos.x, s.pos.y + this.body.standHalf, s.pos.z, Math.PI / 2 + s.yaw);
@@ -111,12 +131,14 @@ export class Game {
     this.ctrl.shape = SHAPE_LAYOUT;
     this.ctrl.pitch = 0;
     this.lastShapeKey = 'none';
+    this.body.trick = this.trick;
+    this.needsJumpRelease = holdingJump;
     this.events.push({ t: 'spawn' });
   }
 
-  selectSpot(i: number) {
+  selectSpot(i: number, holdingJump = false) {
     this.spotIndex = (i + this.level.spots.length) % this.level.spots.length;
-    this.spawn();
+    this.spawn(holdingJump);
   }
 
   /** One frame. Runs the physics at a fixed 240 Hz internally. */
@@ -127,9 +149,16 @@ export class Game {
     this.sinceSpawn += dt;
 
     if (input.spotDelta && (this.phase === 'ready' || this.phase === 'result')) {
-      this.selectSpot(this.spotIndex + input.spotDelta);
+      this.selectSpot(this.spotIndex + input.spotDelta, input.jump);
       return;
     }
+    // The trick can be changed any time, including mid-air -- switching from a
+    // tuck into a manu on the way down is a legitimate (and fun) thing to do.
+    if (input.trickDelta) {
+      this.selectTrick(this.trickIndex + input.trickDelta);
+      this.events.push({ t: 'trick' });
+    }
+    if (!input.jump) this.needsJumpRelease = false;
     // Retrying has to be immediate. A fresh press of the jump key during the
     // result restarts straight away, and because it is the same key you charge
     // the next jump with, holding it through the restart just starts loading
@@ -139,14 +168,17 @@ export class Game {
     if (wantsRestart && (this.phase !== 'result' || this.sinceResult > 0.22)) {
       if (this.phase !== 'ready' || this.sinceSpawn > 0.1) {
         this.prevJump = input.jump;
-        this.spawn();
+        this.spawn(input.jump);
         return;
       }
     }
 
     switch (this.phase) {
       case 'ready':
-        if (input.jump) { this.phase = 'charge'; this.events.push({ t: 'charge' }); }
+        if (input.jump && !this.needsJumpRelease) {
+          this.phase = 'charge';
+          this.events.push({ t: 'charge' });
+        }
         break;
 
       case 'charge': {
@@ -224,6 +256,8 @@ export class Game {
         this.finishDive(e);
       } else if (e.kind === 'solid') {
         this.events.push({ t: 'impact', e });
+      } else if (e.kind === 'churn') {
+        this.events.push({ t: 'churn', e });
       } else if (e.kind === 'water') {
         this.events.push({ t: 'impact', e });
       }
@@ -254,7 +288,10 @@ export class Game {
     const b = this.body;
     this.entered = true;
     this.hadSolidHit = true;
-    this.finishDive({ kind: 'water', speed: 0, normalSpeed: 0, x: b.pos.x, y: b.pos.y, z: b.pos.z, hard: 1 });
+    this.finishDive({
+      kind: 'water', speed: 0, normalSpeed: 0, x: b.pos.x, y: b.pos.y, z: b.pos.z, hard: 1,
+      area: 0, displace: 0, slam: 0, align: 1, vx: 0, vy: 0, vz: 0,
+    });
   }
 
   private finishDive(e: ImpactEvent) {
@@ -267,6 +304,8 @@ export class Game {
     const d = _axis.dot(_vd);
     const sample: EntrySample = {
       speed,
+      intent: b.trick.intent,
+      displace: e.displace,
       align: Math.abs(d),
       vertical: clamp01(-_vd.y),
       spin: b.omegaBody.len(),
@@ -282,7 +321,9 @@ export class Game {
       somersault: b.somersault,
       twist: b.twist,
       meanShape: this.shapeWeight > 1e-4 ? this.shapeAccum / this.shapeWeight : b.shape,
-      shapeName: shapeName(this.shapeWeight > 1e-4 ? this.shapeAccum / this.shapeWeight : b.shape),
+      difficulty: b.trick.difficulty,
+      trickName: b.trick.name,
+      shapeName: shapeLabel(this.shapeWeight > 1e-4 ? this.shapeAccum / this.shapeWeight : b.shape, b.trick),
       scoopUsed: b.scoopUsed,
       nearestSolid: b.nearestSolid,
       lineUpTime: b.airTime - this.lastLooseTime,
@@ -299,7 +340,7 @@ export class Game {
     }
     this.phase = 'result';
     this.sinceResult = 0;
-    this.events.push({ t: 'entry', q: entry.quality, speed, x: e.x, y: e.y, z: e.z });
+    this.events.push({ t: 'entry', reward: entry.quality, speed, x: e.x, y: e.y, z: e.z, phys: e });
   }
 
   hud(): HudState {
@@ -324,6 +365,7 @@ export class Game {
       spotName: this.spot.name,
       spotHeight: this.spot.height,
       crashed: b.mode === 'crashed',
+      trick: this.trick,
     };
   }
 }
