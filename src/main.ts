@@ -150,6 +150,8 @@ resize();
 const _hp = new THREE.Vector3();
 let prev = performance.now();
 let flash = 0;
+/** Set by the pose inspector: hold the simulation but keep rendering. */
+let posePaused = false;
 
 function frame() {
   requestAnimationFrame(frame);
@@ -176,7 +178,7 @@ function frame() {
   // collision, short enough that it never eats an input.
   const scale = director.consumeTimeScale(dt);
 
-  game.update(dt * scale, {
+  if (!posePaused) game.update(dt * scale, {
     jump: intent.jump, jumpEdge: intent.jumpEdge, stretch: intent.stretch, rot: intent.rot,
     restart: intent.restart, spotDelta: intent.spotDelta, trickDelta: intent.trickDelta,
   });
@@ -310,6 +312,22 @@ let debugView = false;
     debugCam.updateProjectionMatrix();
   },
   audioState: () => ({ started: !!audio.ctx, state: audio.ctx?.state ?? 'none', muted: audio.muted }),
+  /**
+   * Freeze the diver in a chosen trick at a fixed point, for inspecting the
+   * rig. The character keeps updating so its joint springs settle.
+   */
+  pausePose(trickIdx: number, shape = 1, x = 6, y = 18, z = -2) {
+    game.selectTrick(trickIdx);
+    game.spawn();
+    game.phase = 'air';
+    game.body.mode = 'air';
+    game.body.pos.set(x, y, z);
+    game.body.vel.set(0, 0, 0);
+    game.body.L.set(0, 0, 0);
+    game.body.shape = shape;
+    posePaused = true;
+  },
+  resumeSim() { posePaused = false; },
   /** Force the crash state, for inspecting the limp-body response. */
   crash() { game.body.mode = 'crashed'; },
   hudOff() { document.getElementById('hud')!.style.display = 'none'; },
