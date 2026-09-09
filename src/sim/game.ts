@@ -5,69 +5,38 @@ import { Level, type Spot } from './level.ts';
 import { TRICKS, shapeLabel, type Trick } from './tricks.ts';
 import { gradeEntry, scoreDive, type DiveResult, type EntrySample, type DiveStats } from './scoring.ts';
 
-/**
- * You are always a person standing somewhere, and a dive is something that
- * person decides to do. There is no level select between you and the water:
- * walk to any edge in the world, load a jump, and go. Quick-travel to a named
- * spot exists because retrying from the top of a hundred-metre tower should not
- * mean walking back up, not because the game is a menu of jumping-off points.
- */
 export type Phase = 'walk' | 'charge' | 'air' | 'result';
 
 export interface GameInput {
-  /** Camera-relative movement on foot, each -1..1. */
   mx: number; mz: number;
   run: boolean;
-  /** Held. On foot: hop or load a dive. In the air: commit to the trick. */
   jump: boolean;
   jumpEdge: boolean;
-  /** Held. In the air: straighten out. */
   stretch: boolean;
-  /** -1 back / +1 front. While loading: lean. In the air: scoop. */
   rot: number;
   restart: boolean;
   spotDelta: number;
   trickDelta: number;
-  /** Where the camera is looking along the ground, radians. */
   camYaw: number;
 }
 
-/**
- * Take-off.
- *
- * Rotation is not a separate thing you charge up. Your legs push through your
- * feet, and if your centre of mass is not directly above your feet, that push
- * has a moment arm. Angular momentum is literally `lean * pushSpeed`: lean
- * further and you spin more, push harder and you spin more, and a weak jump
- * with a big lean gives you far less rotation than a strong one.
- *
- * The whole take-off is therefore two things a player can feel -- how long you
- * loaded it, and what angle you left at -- rather than two meters to fill.
- */
 export const LAUNCH = {
   chargeTime: 0.62,
   upMin: 2.6, upMax: 5.6,
   outMin: 1.5, outMax: 3.5,
   leanRate: 3.2,
-  /** Furthest the centre of mass gets from the feet, metres. */
   leanMax: 0.145,
-  /**
-   * Leaning out also carries you out, and leaning back drops you closer to the
-   * wall you just left. That is what makes a big back rotation frightening.
-   */
   leanOut: 3.2,
 } as const;
 
 const SHAPE_COMMIT = 1.0;
 const SHAPE_LOOSE = 0.42;
 const SHAPE_LAYOUT = 0.0;
-
-const _v = new V3(), _axis = new V3(), _chest = new V3(), _vd = new V3();
+const _v = new V3(), _axis = new V3(), _chest = new V3(), _vd = new V3(), _twist = new V3();
 
 export interface HudState {
   phase: Phase;
   charge: number;
-  /** -1 back .. +1 front, the take-off angle. */
   lean: number;
   altitude: number;
   toWater: number;
@@ -80,10 +49,8 @@ export interface HudState {
   spotHeight: number;
   crashed: boolean;
   trick: Trick;
-  /** On foot: how big the drop in front of you is. */
   edgeDrop: number;
   onFoot: boolean;
-  /** Height of the ledge the current dive started from. */
   takeoffHeight: number;
 }
 
@@ -104,28 +71,21 @@ export class Game {
   body = new DiverBody();
   walker = new Walker();
   phase: Phase = 'walk';
-
   spotIndex = 0;
   trickIndex = 0;
   charge = 0;
   lean = 0;
-
   result: DiveResult | null = null;
   sinceResult = 0;
   sinceSpawn = 0;
   time = 0;
-
   best = 0;
   lastScore = 0;
   bestBySpot: Record<string, number> = {};
-
   events: GameEvent[] = [];
-
-  /** Where this dive started, for scoring and for the instant retry. */
   takeoff = new V3();
   takeoffYaw = 0;
   takeoffHeight = 0;
-  /** Nearest named spot while on foot, or null. */
   nearSpot: Spot | null = null;
 
   private ctrl: DiverControl = { shape: SHAPE_LOOSE, pitch: 0 };
@@ -140,12 +100,6 @@ export class Game {
   private hadSolidHit = false;
   private stepPhase = 0;
   private wasGrounded = true;
-  /**
-   * A retry tap that lands during the post-result cooldown (see `update`)
-   * shouldn't just be dropped -- a player who taps the instant they see
-   * "Crash" is reacting exactly on time, not too early. Latch it and fire as
-   * soon as the cooldown clears, instead of demanding a second tap.
-   */
   private wantsRetryTap = false;
 
   constructor(level?: Level) {
@@ -162,27 +116,14 @@ export class Game {
     this.body.trick = this.trick;
   }
 
-  /** Quick-travel to a named spot and stand there. */
   teleport(i: number, holdingJump = false) {
     this.spotIndex = (i + this.level.spots.length) % this.level.spots.length;
     const s = this.spot;
-    // Walker.yaw follows the (cos,sin) = forward convention used everywhere in
-    // the walk controller (probeEdge included), which is a quarter turn away
-    // from the body's own facing parameter -- see handOffToBody for the other
-    // half of this conversion. Getting only one side of it right is what
-    // produces a character who stands facing the cliff instead of the sea.
     this.standAt(s.pos.x, s.pos.y, s.pos.z, -s.yaw, holdingJump);
   }
 
-  /** Put the player on their feet at a point, ending any dive in progress. */
   standAt(x: number, y: number, z: number, yaw: number, holdingJump = false) {
     this.walker.reset(x, y, z, yaw);
-    // Settle immediately: grounded and atEdge are only ever known correct
-    // after a real physics step, but reset() has to assume something in the
-    // meantime. Priming them here with a zero-length step means the very
-    // first real frame already has the truth, rather than one frame of
-    // "assumed grounded" turning a jump held from the moment you land into a
-    // stray hop before the edge check has ever run.
     this.walker.update(0, { mx: 0, mz: 0, run: false, jump: false, camYaw: yaw }, this.level);
     this.phase = 'walk';
     this.charge = 0;
@@ -196,7 +137,6 @@ export class Game {
     this.events.push({ t: 'spawn' });
   }
 
-  /** Back to the ledge this dive started from. The fast-retry path. */
   retry(holdingJump = false) {
     this.standAt(this.takeoff.x, this.takeoff.y, this.takeoff.z, this.takeoffYaw, holdingJump);
   }
@@ -236,13 +176,9 @@ export class Game {
     if (this.phase === 'result') this.sinceResult += dt;
   }
 
-  // ------------------------------------------------------------------ on foot
-
   private updateWalk(dt: number, input: GameInput) {
     const w = this.walker;
     const wantCharge = input.jump && !this.needsJumpRelease && w.grounded && w.atEdge;
-    // A hop is for getting around; loading a dive only makes sense at an edge,
-    // and the walker measures that from the world rather than from level data.
     w.update(dt, {
       mx: input.mx, mz: input.mz, run: input.run,
       jump: input.jump && !this.needsJumpRelease && !w.atEdge,
@@ -250,15 +186,8 @@ export class Game {
     }, this.level);
 
     if (wantCharge) { this.beginCharge(); return; }
+    if (!w.grounded && w.airTime > 0.18 && w.vel.y < -1.5) { this.beginFall(); return; }
 
-    // Walking off the edge is a legitimate way to start a dive; you just do not
-    // get the push, which is exactly what stepping off a cliff feels like.
-    if (!w.grounded && w.airTime > 0.18 && w.vel.y < -1.5) {
-      this.beginFall();
-      return;
-    }
-
-    // Footsteps.
     if (w.grounded) {
       this.stepPhase += w.gait * dt * 3.4;
       if (this.stepPhase > 1) {
@@ -268,7 +197,6 @@ export class Game {
       if (!this.wasGrounded) this.events.push({ t: 'land', speed: Math.abs(w.vel.y) });
     }
     this.wasGrounded = w.grounded;
-
     this.nearSpot = this.level.nearestSpot(w.pos.x, w.pos.y, w.pos.z, 7);
   }
 
@@ -281,17 +209,9 @@ export class Game {
 
   private updateCharge(dt: number, input: GameInput) {
     this.charge = clamp01(this.charge + dt / LAUNCH.chargeTime);
-    // W/S set the lean, and it is the same physical motion as walking forward
-    // or back: lean forward (W) over your toes for a front rotation, rock back
-    // onto your heels (S) for a back rotation. It follows the stick directly
-    // and springs back when released, so the angle is something you hold, not
-    // something you accumulate.
     const want = clamp(input.mz, -1, 1);
     this.lean = clamp(this.lean + (want - this.lean) * clamp01(dt * LAUNCH.leanRate * 2.2), -1, 1);
 
-    // Aim with the camera while you load. Look where you want to go, hold the
-    // charge, and that is the direction you take off in -- there is no extra
-    // step of shuffling your feet to face a fixed platform edge.
     let d = input.camYaw - this.walker.yaw;
     while (d > Math.PI) d -= Math.PI * 2;
     while (d < -Math.PI) d += Math.PI * 2;
@@ -300,13 +220,9 @@ export class Game {
     if (!input.jump) this.doLaunch();
   }
 
-  // -------------------------------------------------------------------- dive
-
-  /** Move the simulation from the walker to the rigid body. */
   private handOffToBody(): number {
     const w = this.walker;
     const yaw = w.yaw;
-    // See teleport() for the other half of this conversion.
     this.body.reset(w.pos.x, w.pos.y + this.body.standHalf, w.pos.z, Math.PI / 2 - yaw);
     this.body.trick = this.trick;
     this.takeoff.set(w.pos.x, w.pos.y, w.pos.z);
@@ -322,23 +238,43 @@ export class Game {
     return yaw;
   }
 
+  /**
+   * The trick defines an intended take-off family, but nothing spins the diver
+   * after launch. Angular momentum is created here from body lean/push plus a
+   * physically finite twist impulse. Gainer/reverse change the relationship
+   * between travel direction and somersault direction; they are not animations.
+   */
   private doLaunch() {
     const yaw = this.handOffToBody();
     const fx = Math.cos(yaw), fz = Math.sin(yaw);
-
     const push = lerp(LAUNCH.upMin, LAUNCH.upMax, this.charge);
-    const out = lerp(LAUNCH.outMin, LAUNCH.outMax, this.charge) + this.lean * LAUNCH.leanOut * this.charge;
+
+    let intendedSign = 0;
+    if (this.trick.rotationIntent === 'front' || this.trick.rotationIntent === 'reverse') intendedSign = 1;
+    if (this.trick.rotationIntent === 'back' || this.trick.rotationIntent === 'gainer') intendedSign = -1;
+    const physicalLean = Math.abs(this.lean) > 0.08 ? this.lean : intendedSign * 0.72;
+
+    // Reverse dives travel back from the platform while rotating forward.
+    const travelSign = this.trick.rotationIntent === 'reverse' ? -0.62 : 1;
+    const outBase = lerp(LAUNCH.outMin, LAUNCH.outMax, this.charge);
+    const out = (outBase + physicalLean * LAUNCH.leanOut * this.charge) * travelSign;
     _v.set(fx * out, push, fz * out);
 
-    // Angular momentum = moment arm x push. One expression, and every bit of
-    // the take-off's feel comes out of it.
-    const spinL = this.lean * LAUNCH.leanMax * push;
+    const spinL = physicalLean * LAUNCH.leanMax * push;
     this.body.launch(_v, spinL, 0);
+
+    // Twist is angular momentum about the diver's long axis, established at
+    // take-off and transformed into world coordinates. No torque is injected later.
+    if (this.trick.twistL !== 0) {
+      _twist.set(0, this.trick.twistL, 0);
+      this.body.orient.rotate(_twist, _twist);
+      this.body.L.add(_twist);
+    }
+
     this.body.vel.add(this.walker.vel.clone().scale(0.55));
     this.events.push({ t: 'launch' });
   }
 
-  /** Walked off an edge: no push, whatever momentum you had. */
   private beginFall() {
     this.handOffToBody();
     this.body.vel.copy(this.walker.vel);
@@ -388,13 +324,9 @@ export class Game {
       if (e.kind === 'water' && !this.entered && this.phase === 'air') {
         this.entered = true;
         this.finishDive(e);
-      } else if (e.kind === 'solid') {
-        this.events.push({ t: 'impact', e });
-      } else if (e.kind === 'churn') {
-        this.events.push({ t: 'churn', e });
-      } else if (e.kind === 'water') {
-        this.events.push({ t: 'impact', e });
-      }
+      } else if (e.kind === 'solid') this.events.push({ t: 'impact', e });
+      else if (e.kind === 'churn') this.events.push({ t: 'churn', e });
+      else if (e.kind === 'water') this.events.push({ t: 'impact', e });
     }
     list.length = 0;
   }
@@ -404,7 +336,8 @@ export class Game {
     this.entered = true;
     this.hadSolidHit = true;
     this.finishDive({
-      kind: 'water', speed: 0, normalSpeed: 0, x: b.pos.x, y: b.pos.y, z: b.pos.z, hard: 1,
+      kind: 'water', speed: 0, normalSpeed: 0,
+      x: b.pos.x, y: b.pos.y, z: b.pos.z, hard: 1,
       area: 0, displace: 0, slam: 0, align: 1, vx: 0, vy: 0, vz: 0,
     });
   }
@@ -415,8 +348,8 @@ export class Game {
     b.bodyFacing(_chest);
     const speed = b.vel.len();
     _vd.copy(b.vel).scale(speed > 1e-4 ? 1 / speed : 0);
-
     const d = _axis.dot(_vd);
+
     const sample: EntrySample = {
       speed,
       intent: b.trick.intent,
@@ -431,7 +364,6 @@ export class Game {
     };
     const entry = gradeEntry(sample);
     const meanShape = this.shapeWeight > 1e-4 ? this.shapeAccum / this.shapeWeight : b.shape;
-
     const stats: DiveStats = {
       fall: Math.max(0, b.peakY - e.y),
       difficulty: b.trick.difficulty,
@@ -476,6 +408,7 @@ export class Game {
     const disc = vy * vy + 2 * g * Math.max(0, toWater);
     const tt = disc > 0 ? (vy + Math.sqrt(disc)) / g : 0;
     const spot = this.nearSpot ?? this.spot;
+
     return {
       phase: this.phase,
       charge: this.charge,
@@ -487,7 +420,7 @@ export class Game {
       halfRots: Math.abs(this.body.somersault) / Math.PI,
       halfTwists: Math.abs(this.body.twist) / Math.PI,
       shape: this.body.shape,
-      spotName: onFoot ? (this.nearSpot ? this.nearSpot.name : 'Cala Nera') : this.spot.name,
+      spotName: onFoot ? (this.nearSpot ? this.nearSpot.name : this.level.name) : this.spot.name,
       spotHeight: onFoot ? toWater : this.takeoffHeight,
       crashed: this.body.mode === 'crashed',
       trick: this.trick,
