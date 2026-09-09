@@ -1,14 +1,10 @@
 /// <reference lib="webworker" />
-import { Level } from '../sim/level.ts';
+import { Level, mapIdFrom, type MapId } from '../sim/level.ts';
 import { buildRockMesh } from './surfacenets.ts';
 
-/**
- * Meshing the cove takes a few seconds, and doing it on the main thread means a
- * frozen tab and a loading screen that cannot even animate. The field is
- * deterministic, so the worker just rebuilds the level and meshes it.
- */
-self.onmessage = (e: MessageEvent<{ cell: number }>) => {
-  const level = new Level();
+/** Mesh only the ground SDF. High islands are rendered separately from exact collision OBBs. */
+self.onmessage = (e: MessageEvent<{ cell: number; mapId?: MapId | string }>) => {
+  const level = new Level(mapIdFrom(e.data.mapId));
   const m = buildRockMesh(level.rock, e.data.cell);
   (self as unknown as Worker).postMessage(
     { positions: m.positions, normals: m.normals, ao: m.ao, indices: m.indices, triangles: m.triangles },
