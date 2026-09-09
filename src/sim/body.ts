@@ -1,44 +1,36 @@
 import { V3, Quat, clamp, clamp01, lerp } from '../core/vec.ts';
 import { poseAt, collisionSpheres, newPose, trickById, BODY_MASS, type PoseData, type Trick } from './tricks.ts';
 
-export const GRAVITY = 9.81;
-const AIR_RHO = 1.225;
-const WATER_RHO = 1000;
-const CD_AIR = 1.0;
-const CD_WATER = 1.2;
+export const GRAVITY = 9.80665;
+const EARTH_RADIUS = 6_371_000;
+const SEA_LEVEL_AIR_RHO = 1.225;
+const ATMOSPHERE_SCALE_HEIGHT = 8500;
+const WATER_RHO = 1025;
 
-/** Everything a designer might want to feel-tune, in one place. */
+/** Real-enough environmental functions for the 0-500 m playable altitude range. */
+export function gravityAtAltitude(y: number): number {
+  const h = Math.max(-100, y);
+  const r = EARTH_RADIUS / (EARTH_RADIUS + h);
+  return GRAVITY * r * r;
+}
+export function airDensityAtAltitude(y: number): number {
+  return SEA_LEVEL_AIR_RHO * Math.exp(-Math.max(0, y) / ATMOSPHERE_SCALE_HEIGHT);
+}
+
 export const TUNE = {
-  /** Seconds to snap from fully open to fully tucked (fast: it's a snap). */
   tuckTime: 0.20,
-  /** Seconds to open back out (slower: opening is a controlled unfurl). */
   openTime: 0.30,
-  /** Player's pitch "scoop" authority, rad/s^2. Enough to fix a near miss, not to fly. */
   scoopAccel: 2.2,
-  /**
-   * How much rotation rate the scoop can add in one direction over a whole
-   * dive, rad/s. Without a cap, holding the key for a four-second fall adds
-   * more rotation than the takeoff did, and the game stops being about the
-   * angular momentum you committed to on the platform. A real diver swinging
-   * their arms has exactly this kind of bounded authority.
-   */
   scoopBudget: 2.3,
-  /** Aero weathervane strength: rad/s^2 at 20 m/s, fully extended, broadside. */
   alignAccel: 3.2,
-  /** Rotational air damping when extended, 1/s at 20 m/s. Settles the weathervane. */
   alignDamp: 2.6,
-  /** Reference speed the two aero terms above are quoted at. */
   aeroRefSpeed: 20,
-  /** Active control damping about twist/cartwheel axes (1/s). Keeps dives readable. */
   axisStab: 2.4,
-  /** Baseline air damping on rotation, independent of pose. */
   angDrag: 1.2e-3,
-  /** Safety caps. Real bodies do not spin at 3000 rad/s, and neither should bugs. */
-  maxOmega: 26,
-  maxSpeed: 95,
-  /** Impact speed above which an airborne contact with solid geometry is a crash. */
+  /** Numerical guard only; normal human terminal velocities are far below this. */
+  maxOmega: 30,
+  maxSpeed: 180,
   crashSpeed: 1.8,
-  /** Grace period after launch where platform contacts cannot crash you. */
   launchGrace: 0.10,
 };
 
@@ -47,108 +39,70 @@ export type BodyMode = 'ground' | 'air' | 'water' | 'crashed';
 export interface Contact {
   nx: number; ny: number; nz: number;
   depth: number;
-  /** Surface hardness 0..1 (used for impact audio + how badly it hurts). */
   hard: number;
 }
-
 export interface CollisionWorld {
-  /** Deepest contact for a sphere, or false. Fills `out`. */
   probeSphere(cx: number, cy: number, cz: number, r: number, out: Contact): boolean;
-  /** Water surface height at (x, z). */
   waterHeight(x: number, z: number): number;
 }
-
 export interface DiverControl {
-  /** Target body shape, 0 = layout, 1 = tuck. */
   shape: number;
-  /** Pitch scoop, -1..1. Positive = rotate forward (front somersault direction). */
   pitch: number;
 }
+export interface ImpactEvent {
+  kind: 'solid' | 'water' | 'churn';
+  speed: number;
+  normalSpeed: number;
+  x: number; y: number; z: number;
+  hard: number;
+  area: number;
+  displace: number;
+  slam: number;
+  align: number;
+  vx: number; vy: number; vz: number;
+}
 
-// Scratch vectors. Each has ONE job for the whole of step(); sharing them
-// between "acceleration" and "torque" once cost an afternoon.
 const _acc = new V3(), _torque = new V3(), _axis = new V3();
 const _t1 = new V3(), _t2 = new V3(), _t3 = new V3();
 const _c1 = new V3();
 const _spheres = [{ off: 0, r: 0 }, { off: 0, r: 0 }, { off: 0, r: 0 }];
 const _contact: Contact = { nx: 0, ny: 1, nz: 0, depth: 0, hard: 1 };
-
 const BODY_Y = new V3(0, 1, 0);
 const BODY_X = new V3(1, 0, 0);
 const BODY_Z = new V3(0, 0, 1);
-
-export interface ImpactEvent {
-  kind: 'solid' | 'water' | 'churn';
-  speed: number;
-  /** Normal-component of impact speed. */
-  normalSpeed: number;
-  x: number; y: number; z: number;
-  hard: number;
-  /**
-   * Water impacts carry the physics the splash is built from. There is nothing
-   * random in here: the same entry always throws the same splash, and a flatter
-   * or faster one always throws a bigger one.
-   */
-  /** Area the body presents to the flow, m^2. */
-  area: number;
-  /** Volume of water displaced per second at the moment of contact, m^3/s. */
-  displace: number;
-  /** area * speed^2 -- how violently the surface is struck. */
-  slam: number;
-  /** |dot(bodyAxis, velocityDir)|: 1 = arrow, 0 = broadside. */
-  align: number;
-  /** Velocity at impact, so the splash can lean the way the body was going. */
-  vx: number; vy: number; vz: number;
-}
 
 export class DiverBody {
   pos = new V3();
   vel = new V3();
   orient = new Quat();
-  /** Angular momentum in WORLD space (per unit mass). This is what is conserved. */
+  /** World-space angular momentum per unit mass. Conserved except real torques. */
   L = new V3();
 
   shape = 0.32;
   shapeTarget = 0.32;
-  /** The air trick currently selected. Decides what "fully committed" means. */
-  trick: Trick = trickById('tuck');
+  trick: Trick = trickById('front-tuck');
   pose: PoseData = newPose();
-
   mode: BodyMode = 'ground';
-  /** World-space angular velocity, derived each step. */
   omega = new V3();
-  /** Body-frame angular velocity: .x somersault, .y twist, .z cartwheel. */
   omegaBody = new V3();
 
-  // --- dive bookkeeping (scoring + HUD read these) ---
   airTime = 0;
   launchY = 0;
   peakY = 0;
-  /** Signed accumulated somersault rotation, radians. */
   somersault = 0;
-  /** Signed accumulated twist, radians. */
   twist = 0;
-  /** How much scoop input has been used this dive (style penalty). */
   scoopUsed = 0;
-  /** Signed rotation rate added by the scoop so far, against TUNE.scoopBudget. */
   scoopDelta = 0;
-  /** Set when the body first touches water. */
   submerged = 0;
   depth = 0;
-  /** Impact events produced this step; consumed by the game layer. */
   impacts: ImpactEvent[] = [];
-  /** Time since the last solid contact while airborne. */
   sinceSolid = 99;
-  /** Closest approach to any solid surface while airborne, for near-miss bonuses. */
   nearestSolid = 99;
+  restingTime = 0;
+  projArea = 0.1;
+  displaceRate = 0;
 
   private timeSinceLaunch = 0;
-  /** How long we have been motionless against solid geometry. */
-  restingTime = 0;
-  /** Area presented to the flow this step, m^2. Drives drag and the splash. */
-  projArea = 0.1;
-  /** Volume of water displaced per second, m^3/s. Zero out of the water. */
-  displaceRate = 0;
   private wasSubmerged = 0;
   private churn = 0;
 
@@ -158,113 +112,84 @@ export class DiverBody {
     this.L.set(0, 0, 0);
     this.omega.set(0, 0, 0);
     this.omegaBody.set(0, 0, 0);
-    this.shape = this.shapeTarget = 0.0;
+    this.shape = this.shapeTarget = 0;
     poseAt(this.shape, this.trick, this.pose);
-    // Face `facing` (radians about world Y), upright.
     this.orient.setAxisAngle(new V3(0, 1, 0), facing);
     this.mode = 'ground';
     this.airTime = 0; this.launchY = y; this.peakY = y;
     this.somersault = 0; this.twist = 0; this.scoopUsed = 0; this.scoopDelta = 0;
     this.submerged = 0; this.depth = 0;
-    this.timeSinceLaunch = 0;
-    this.sinceSolid = 99;
-    this.nearestSolid = 99;
-    this.restingTime = 0;
-    this.wasSubmerged = 0;
-    this.churn = 0;
-    this.impacts.length = 0;
+    this.timeSinceLaunch = 0; this.sinceSolid = 99; this.nearestSolid = 99; this.restingTime = 0;
+    this.wasSubmerged = 0; this.churn = 0; this.impacts.length = 0;
   }
 
-  /** Standing half-height, used to place feet on a platform. */
   get standHalf(): number { return 0.95; }
-
   bodyAxis(out = new V3()): V3 { return this.orient.rotate(BODY_Y, out); }
   bodyRight(out = new V3()): V3 { return this.orient.rotate(BODY_X, out); }
   bodyFacing(out = new V3()): V3 { return this.orient.rotate(BODY_Z, out); }
 
-  /**
-   * @param spinL angular momentum per unit mass about the somersault axis,
-   *   m^2/s. Passing momentum rather than a rate matters: the same take-off
-   *   produces the same momentum whatever shape you happen to be in, which is
-   *   what makes charge and lean combine the way they physically should.
-   */
   launch(vel: V3, spinL: number, lateralL = 0) {
     this.vel.copy(vel);
     this.mode = 'air';
-    this.timeSinceLaunch = 0;
-    this.airTime = 0;
-    this.launchY = this.pos.y;
-    this.peakY = this.pos.y;
+    this.timeSinceLaunch = 0; this.airTime = 0;
+    this.launchY = this.pos.y; this.peakY = this.pos.y;
     this.somersault = 0; this.twist = 0; this.scoopUsed = 0; this.scoopDelta = 0;
-    this.nearestSolid = 99;
-    this.restingTime = 0;
-    // Angular momentum about the diver's own somersault axis, converted to world.
+    this.nearestSolid = 99; this.restingTime = 0;
     poseAt(this.shape, this.trick, this.pose);
     _t1.set(spinL, 0, lateralL);
     this.orient.rotate(_t1, this.L);
   }
 
-  /** Recompute omega from L and the current orientation/inertia. */
   private syncOmega() {
     const I = this.pose.inertia;
-    this.orient.unrotate(this.L, _t1);          // L in body frame
+    this.orient.unrotate(this.L, _t1);
     this.omegaBody.set(_t1.x / I.x, _t1.y / I.y, _t1.z / I.z);
     this.orient.rotate(this.omegaBody, this.omega);
   }
 
   step(dt: number, ctrl: DiverControl, world: CollisionWorld) {
-    // --- 1. Body shape follows the player's input at a physical rate ---
     const rate = ctrl.shape > this.shape ? 1 / TUNE.tuckTime : 1 / TUNE.openTime;
     const maxStep = rate * dt;
-    const d = clamp(ctrl.shape - this.shape, -maxStep, maxStep);
-    this.shape = clamp01(this.shape + d);
+    this.shape = clamp01(this.shape + clamp(ctrl.shape - this.shape, -maxStep, maxStep));
     poseAt(this.shape, this.trick, this.pose);
-
     this.syncOmega();
 
     const speed = this.vel.len();
     const waterY = world.waterHeight(this.pos.x, this.pos.z);
-
-    // Vertical extent of the body, for a smooth submergence fraction.
     this.bodyAxis(_axis);
     const vext = Math.abs(_axis.y) * this.pose.halfLength + this.pose.radius;
     const sub = clamp01((waterY - (this.pos.y - vext)) / (2 * vext));
     this.submerged = sub;
     this.depth = Math.max(0, waterY - this.pos.y);
 
-    // --- 2. Linear forces (accelerations; mass is normalised to 1) ---
-    const acc = _acc.set(0, -GRAVITY, 0);
+    const g = gravityAtAltitude(this.pos.y);
+    const acc = _acc.set(0, -g, 0);
 
     let align = 1;
     if (speed > 0.01) {
-      _t1.copy(this.vel).scale(1 / speed);            // velocity direction
-      align = Math.abs(_axis.dot(_t1));               // 1 = arrow, 0 = broadside
-      const area = lerp(this.pose.areaBroad, this.pose.areaSlim, align);
-      const rho = lerp(AIR_RHO, WATER_RHO, sub);
-      const cd = lerp(CD_AIR, CD_WATER, sub);
-      const dragA = 0.5 * rho * cd * area * speed;    // per unit speed
+      _t1.copy(this.vel).scale(1 / speed);
+      align = Math.abs(_axis.dot(_t1));
+      const areaPerMass = lerp(this.pose.areaBroad, this.pose.areaSlim, align);
+      const airRho = airDensityAtAltitude(this.pos.y);
+      const rho = lerp(airRho, WATER_RHO, sub);
+      // Human Cd varies with posture. A streamlined long-axis entry is lower,
+      // broadside spread positions are higher. Water uses a larger Cd.
+      const airCd = lerp(1.05, 0.72, align) * lerp(1.0, 0.92, this.pose.extension);
+      const cd = lerp(airCd, 1.15, sub);
+      // Fd/m = 0.5*rho*Cd*(A/m)*v^2. Multiplying vel by speed gives v^2 directionally.
+      const dragA = 0.5 * rho * cd * areaPerMass * speed;
       acc.addScaled(this.vel, -dragA);
-      // The same projected area the drag uses, in real square metres. Every
-      // splash in the game is a function of this number and the speed.
-      this.projArea = area * BODY_MASS;
+      this.projArea = areaPerMass * BODY_MASS;
       this.displaceRate = this.projArea * speed;
     }
-    // Buoyancy: a human is very slightly less dense than seawater, so a deep
-    // entry decelerates and then floats back up. That "come up for air" beat is
-    // a big part of why a clean dive feels good.
-    acc.y += sub * GRAVITY * 1.06;
 
-    // --- 3. Torques (world space, added straight into angular momentum) ---
+    // Human average density is slightly below seawater. Buoyancy grows with submerged fraction.
+    acc.y += sub * g * 1.06;
+
     const torque = _torque.set(0, 0, 0);
     const I = this.pose.inertia;
-
     if (this.mode !== 'crashed') {
-      // (a) Player scoop: specified as an angular *acceleration* so it feels the
-      //     same whether tucked or extended, then converted to a torque.
       if (ctrl.pitch !== 0 && sub < 0.5) {
-        // Authority fades as the budget in this direction is spent, and comes
-        // back if you scoop the other way. So it stays a correction, never an
-        // engine, and it never cuts out abruptly mid-adjustment.
         const spent = this.scoopDelta * Math.sign(ctrl.pitch);
         const gain = spent <= 0 ? 1 : clamp01(1 - spent / TUNE.scoopBudget);
         const alpha = TUNE.scoopAccel * ctrl.pitch * gain;
@@ -274,53 +199,38 @@ export class DiverBody {
         torque.add(_t2);
         this.scoopUsed += Math.abs(ctrl.pitch) * gain * dt;
       }
-      // (b) Active axis control: a real diver fights unwanted twist/cartwheel.
       _t2.set(0, -TUNE.axisStab * I.y * this.omegaBody.y, -TUNE.axisStab * I.z * this.omegaBody.z);
       this.orient.rotate(_t2, _t2);
       torque.add(_t2);
     }
 
-    // (c) Aerodynamic weathervane -- the heart of the whole control scheme.
-    //     A body that is stretched out and moving fast gets pushed into line with
-    //     the airflow, and rotational drag then settles it there. So opening out
-    //     late genuinely helps you find the entry, but it costs you every bit of
-    //     your rotation. Choosing that instant IS the game.
-    //
-    //     Both terms scale with speed, which gives the level its difficulty curve
-    //     for free: from the Mast the air really does straighten you out, while
-    //     off the Shelf you are on your own and have to time it yourself.
     const ext = this.pose.extension;
     if (ext > 0.01 && speed > 2.5 && sub < 0.7) {
       const q = speed / TUNE.aeroRefSpeed;
+      const densityScale = airDensityAtAltitude(this.pos.y) / SEA_LEVEL_AIR_RHO;
       const wet = 1 - sub / 0.7;
       _t2.copy(this.vel).scale(1 / speed);
-      const sgn = _axis.dot(_t2) >= 0 ? 1 : -1;       // align whichever end leads
+      const sgn = _axis.dot(_t2) >= 0 ? 1 : -1;
       _t2.scale(sgn);
-      // axis = bodyAxis x flowDir; |axis| = sin(misalignment)
       _t3.set(
         _axis.y * _t2.z - _axis.z * _t2.y,
         _axis.z * _t2.x - _axis.x * _t2.z,
         _axis.x * _t2.y - _axis.y * _t2.x,
-      ).scale(TUNE.alignAccel * ext * q * q * wet);
-      _t3.addScaled(this.omega, -TUNE.alignDamp * ext * q * wet);
+      ).scale(TUNE.alignAccel * ext * q * q * wet * densityScale);
+      _t3.addScaled(this.omega, -TUNE.alignDamp * ext * q * wet * densityScale);
       this.alphaToTorque(_t3, _t3);
       torque.add(_t3);
     }
 
-    // (d) Baseline air/water damping, present in every pose.
-    {
-      const kd = TUNE.angDrag * (0.25 + 0.75 * ext) * (speed + 2) * lerp(1, 320, sub);
-      torque.addScaled(this.omega, -kd);
-    }
+    const kd = TUNE.angDrag * (0.25 + 0.75 * ext) * (speed + 2) * lerp(1, 320, sub);
+    torque.addScaled(this.omega, -kd);
 
-    // --- 4. Integrate ---
     this.vel.addScaled(acc, dt);
     this.L.addScaled(torque, dt);
     this.syncOmega();
     this.orient.integrate(this.omega, dt);
     this.pos.addScaled(this.vel, dt);
 
-    // Accumulate rotation in body terms, for scoring.
     if (this.mode === 'air' || this.mode === 'crashed') {
       this.somersault += this.omegaBody.x * dt;
       this.twist += this.omegaBody.y * dt;
@@ -329,12 +239,6 @@ export class DiverBody {
       this.peakY = Math.max(this.peakY, this.pos.y);
     }
 
-    // --- 5. Water surface crossing ---
-    // The moment of first contact carries the full physics of the impact. After
-    // that, as long as the body is still tearing through the surface, it keeps
-    // throwing water in proportion to how much it is displacing -- so a body
-    // that goes deep and fast keeps feeding the plume, and one that skips off
-    // barely disturbs it.
     if ((this.mode === 'air' || this.mode === 'crashed') && sub > 0.02 && this.wasSubmerged <= 0.02) {
       this.impacts.push({
         kind: 'water', speed, normalSpeed: Math.abs(this.vel.y),
@@ -356,12 +260,8 @@ export class DiverBody {
       }
     }
     this.wasSubmerged = sub;
-    if (this.mode === 'water' && sub <= 0.001) {
-      // Left the water again (a skip off the surface) -- back to falling.
-      this.mode = 'air';
-    }
+    if (this.mode === 'water' && sub <= 0.001) this.mode = 'air';
 
-    // --- 6. Solid collision ---
     this.resolveContacts(dt, world);
     this.sinceSolid += dt;
   }
@@ -378,38 +278,25 @@ export class DiverBody {
         const cx = this.pos.x + _axis.x * s.off;
         const cy = this.pos.y + _axis.y * s.off;
         const cz = this.pos.z + _axis.z * s.off;
-        // A generous query radius on the first iteration also gives us the
-        // near-miss distance used for "close call" scoring.
         if (!world.probeSphere(cx, cy, cz, s.r, _contact)) continue;
         any = true;
         const n = _c1.set(_contact.nx, _contact.ny, _contact.nz);
 
-        // Contact point offset from centre of mass.
         const rx = _axis.x * s.off - n.x * s.r;
         const ry = _axis.y * s.off - n.y * s.r;
         const rz = _axis.z * s.off - n.z * s.r;
-
-        // Velocity at the contact point (v + omega x r).
         const w = this.omega;
         const pvx = this.vel.x + (w.y * rz - w.z * ry);
         const pvy = this.vel.y + (w.z * rx - w.x * rz);
         const pvz = this.vel.z + (w.x * ry - w.y * rx);
         const vn = pvx * n.x + pvy * n.y + pvz * n.z;
 
-        // Positional correction (Baumgarte-ish, no energy added).
-        const push = Math.min(_contact.depth, 0.35);
-        this.pos.addScaled(n, push);
-
-        // Deep penetration means we started inside geometry (or the SDF gradient
-        // is unreliable there). Push out, but never fire an impulse -- that is
-        // how a solver ends up launching the body at a thousand radians a second.
+        this.pos.addScaled(n, Math.min(_contact.depth, 0.35));
         if (_contact.depth > s.r * 1.1) continue;
 
         if (vn < 0) {
           const impactSpeed = -vn;
-          if (this.mode === 'air' && this.timeSinceLaunch > TUNE.launchGrace && impactSpeed > TUNE.crashSpeed) {
-            this.mode = 'crashed';
-          }
+          if (this.mode === 'air' && this.timeSinceLaunch > TUNE.launchGrace && impactSpeed > TUNE.crashSpeed) this.mode = 'crashed';
           if (impactSpeed > 0.6 && this.sinceSolid > 0.08) {
             this.impacts.push({
               kind: 'solid', speed: Math.hypot(pvx, pvy, pvz), normalSpeed: impactSpeed,
@@ -420,14 +307,11 @@ export class DiverBody {
             this.sinceSolid = 0;
           }
 
-          const restitution = this.mode === 'crashed' ? 0.22 : 0.0;
+          const restitution = this.mode === 'crashed' ? 0.22 : 0;
           const friction = this.mode === 'crashed' ? 0.45 : 0.85;
-
-          // Effective mass along the normal for a body with inertia tensor I.
           const jn = -(1 + restitution) * vn / this.effMass(rx, ry, rz, n);
           this.applyImpulse(jn, n, rx, ry, rz);
 
-          // Tangential friction impulse.
           const tvx = pvx - vn * n.x, tvy = pvy - vn * n.y, tvz = pvz - vn * n.z;
           const tl = Math.hypot(tvx, tvy, tvz);
           if (tl > 1e-4) {
@@ -443,39 +327,26 @@ export class DiverBody {
       if (!any) break;
     }
 
-    // Standing on solid ground: kill residual jitter.
     if (this.mode === 'ground') {
       this.vel.scale(Math.exp(-14 * dt));
       this.L.scale(Math.exp(-14 * dt));
     }
 
-    // Hard caps. A crash should fling you convincingly, not into orbit.
     const sp = this.vel.len();
     if (sp > TUNE.maxSpeed) this.vel.scale(TUNE.maxSpeed / sp);
     this.syncOmega();
     const w = this.omega.len();
     if (w > TUNE.maxOmega) this.L.scale(TUNE.maxOmega / w);
 
-    // Came to rest on rock: the dive is over even though we never reached water.
-    if ((this.mode === 'crashed' || this.mode === 'air') && nearest === 0 && sp < 1.2 && this.submerged < 0.3) {
-      this.restingTime += dt;
-    } else if (sp > 2) {
-      this.restingTime = 0;
-    }
+    if ((this.mode === 'crashed' || this.mode === 'air') && nearest === 0 && sp < 1.2 && this.submerged < 0.3) this.restingTime += dt;
+    else if (sp > 2) this.restingTime = 0;
 
-    // Numerical safety net -- never let the sim produce NaNs.
     if (!this.pos.isFinite() || !this.vel.isFinite() || !this.orient.isFinite() || !this.L.isFinite()) {
       this.vel.set(0, 0, 0); this.L.set(0, 0, 0); this.orient.identity();
       if (!this.pos.isFinite()) this.pos.set(0, 30, 0);
     }
   }
 
-  /**
-   * Convert a desired world-space angular acceleration into the torque that
-   * produces it, given the current orientation and pose: tau = I_world * alpha.
-   * Working in acceleration terms keeps the controls feeling identical whether
-   * the diver is tucked or stretched.
-   */
   private alphaToTorque(alpha: V3, out: V3): V3 {
     this.orient.unrotate(alpha, out);
     const I = this.pose.inertia;
@@ -483,9 +354,7 @@ export class DiverBody {
     return this.orient.rotate(out, out);
   }
 
-  /** 1 / (1/m + n . (I^-1 (r x n)) x r), with m = 1. */
   private effMass(rx: number, ry: number, rz: number, n: V3): number {
-    // rxn in world, then to body, divide by I, back to world, cross with r, dot n.
     const ax = ry * n.z - rz * n.y;
     const ay = rz * n.x - rx * n.z;
     const az = rx * n.y - ry * n.x;
@@ -502,7 +371,6 @@ export class DiverBody {
 
   private applyImpulse(j: number, dir: V3, rx: number, ry: number, rz: number) {
     this.vel.addScaled(dir, j);
-    // dL = r x (j * dir)
     this.L.x += ry * dir.z * j - rz * dir.y * j;
     this.L.y += rz * dir.x * j - rx * dir.z * j;
     this.L.z += rx * dir.y * j - ry * dir.x * j;
